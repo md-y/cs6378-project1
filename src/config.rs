@@ -130,12 +130,12 @@ impl From<adj::AdjError> for ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ConfigError::MissingKey(key) => write!(f, "Missing: {}", key),
-            ConfigError::InvalidValue(value) => write!(f, "Invalid value: {}", value),
-            ConfigError::Adj(err) => write!(f, "Bad Adj: {}", err),
-            ConfigError::AddrParse(err) => write!(f, "Address parse error: {}", err),
+            ConfigError::MissingKey(key) => write!(f, "The \"{}\" setting is missing from the config.", key),
+            ConfigError::InvalidValue(value) => write!(f, "The \"{}\" setting value is invalid.", value),
+            ConfigError::Adj(err) => write!(f, "The Adj matrix is incorrectly configured: {}", err),
+            ConfigError::AddrParse(err) => write!(f, "Socket address parse error: {}", err),
             ConfigError::Io(err) => write!(f, "IO error: {}", err),
-            ConfigError::Deserialize(err) => write!(f, "Deserialize error: {}", err),
+            ConfigError::Deserialize(err) => write!(f, "Config deserialization error: {}", err),
         }
     }
 }
