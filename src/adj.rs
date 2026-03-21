@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use serde::Deserialize;
 
@@ -14,6 +14,24 @@ impl Adj {
             Some(elem) => *elem,
             None => false,
         };
+    }
+
+    pub fn is_connected(&self) -> bool {
+        let mut seen = HashSet::<u32>::new();
+        let mut queue = Vec::<u32>::with_capacity(self.n as usize);
+        queue.push(0);
+        seen.insert(0);
+
+        while let Some(i) = queue.pop() {
+            for j in 0..self.n {
+                if i != j && !seen.contains(&j) && (self.get(i, j) || self.get(j, i)) {
+                    seen.insert(j);
+                    queue.push(j);
+                }
+            }
+        }
+
+        return seen.len() == self.n as usize;
     }
 }
 
@@ -44,23 +62,29 @@ impl RawAdj {
             }
         }
 
-        // TODO: Do adj connected check
-
-        return Ok(Adj {
+        let adj = Adj {
             n: self.n,
             data: flat_vec,
-        });
+        };
+
+        if !adj.is_connected() {
+            return Err(AdjError::NotConnected);
+        }
+
+        return Ok(adj);
     }
 }
 
 #[derive(Debug)]
 pub enum AdjError {
     BadDimensions,
+    NotConnected,
 }
 
 impl fmt::Display for AdjError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            AdjError::NotConnected => write!(f, "Adj matrix is not connected"),
             AdjError::BadDimensions => write!(f, "Adj dimensions are invalid"),
         }
     }
