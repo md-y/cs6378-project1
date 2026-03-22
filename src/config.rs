@@ -2,9 +2,9 @@ use http::uri::Authority;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
-use std::{fmt, fs, io};
+use std::{fmt, fs, io, vec};
 
 use crate::adj;
 
@@ -16,17 +16,16 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn read_file<P: AsRef<Path>>(file_path: P) -> Result<Self, ConfigError> {
-        let raw = RawConfig::read_file(file_path)?;
-        return Ok(raw.to_valid()?);
-    }
-
     /// Attempts to read a series of files, merging any it finds.
     pub fn read_files<P: AsRef<Path>>(file_paths: &[P]) -> Result<Option<Self>, ConfigError> {
         return match RawConfig::read_files(file_paths)? {
             Some(raw) => Ok(Some(raw.to_valid()?)),
             None => Ok(None),
         };
+    }
+
+    pub fn resolve_route(&self, id: u32) -> String {
+        return self.routes.get(id as usize).unwrap().to_string();
     }
 
     pub fn get_listen_address(&self) -> SocketAddr {
@@ -36,6 +35,17 @@ impl Config {
             .and_then(|r| r.port_u16())
             .unwrap();
         return SocketAddr::new(self.listen_ip, port);
+    }
+
+    pub fn get_nodes_to_connect(&self) -> Vec<u32> {
+        let i = self.id;
+        let mut nodes = Vec::<u32>::new();
+        for j in 0..(self.adj.n) {
+            if (self.adj.get(i, j) || self.adj.get(j, i)) && i < j {
+                nodes.push(j);
+            }
+        }
+        return nodes;
     }
 }
 

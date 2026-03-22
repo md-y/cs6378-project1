@@ -9,6 +9,9 @@ pub struct Adj {
 
 impl Adj {
     pub fn get(&self, i: u32, j: u32) -> bool {
+        if i == j {
+            return false;
+        }
         let idx = (i * self.n + j) as usize;
         return match self.data.get(idx) {
             Some(elem) => *elem,
