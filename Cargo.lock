@@ -92,6 +92,7 @@ dependencies = [
  "bson",
  "futures",
  "http",
+ "log",
  "serde",
  "tokio",
  "toml",

@@ -41,7 +41,12 @@ impl Config {
         let i = self.id;
         let mut nodes = Vec::<u32>::new();
         for j in 0..(self.adj.n) {
-            if (self.adj.get(i, j) || self.adj.get(j, i)) && i < j {
+            if !self.adj.get(i, j) {
+                continue;
+            }
+            let bidirectional = self.adj.get(j, i);
+            let has_priority = i < j;
+            if !bidirectional || (bidirectional && has_priority) {
                 nodes.push(j);
             }
         }
