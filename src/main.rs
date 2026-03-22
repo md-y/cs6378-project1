@@ -2,8 +2,8 @@ use std::error::Error;
 
 use crate::config::Config;
 
-mod config;
 mod adj;
+mod config;
 
 fn main() -> Result<(), Box<dyn Error>> {
     if let Err(err) = run() {
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn run() -> Result<(), Box<dyn Error>> {
     let config = Config::read_files(&["config.toml", "../config.toml"])?.unwrap();
 
-    dbg!(config.adj.get(0, 0));
+    dbg!(config.get_listen_address());
 
     return Ok(());
 }

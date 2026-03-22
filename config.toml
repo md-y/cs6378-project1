@@ -8,3 +8,9 @@ matrix = [
   [0, 0, 0, 0],
   [0, 0, 0, 0]
 ]
+
+[routes]
+0 = "google.com:1234"
+1 = "google.com:1234"
+2 = "google.com:1234"
+3 = "google.com:1234"

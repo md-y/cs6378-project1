@@ -1,18 +1,18 @@
+use http::uri::Authority;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::net::{AddrParseError, IpAddr, SocketAddr};
+use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::{fmt, fs, io};
 
 use crate::adj;
 
-const DEFAULT_IP: &str = "127.0.0.1";
-const DEFAULT_PORT: u16 = 25563;
-
 pub struct Config {
     pub id: u32,
-    pub addr: SocketAddr,
+    pub listen_ip: IpAddr,
     pub adj: adj::Adj,
+    pub routes: Vec<Authority>,
 }
 
 impl Config {
@@ -28,23 +28,32 @@ impl Config {
             None => Ok(None),
         };
     }
+
+    pub fn get_listen_address(&self) -> SocketAddr {
+        let port = self
+            .routes
+            .get(self.id as usize)
+            .and_then(|r| r.port_u16())
+            .unwrap();
+        return SocketAddr::new(self.listen_ip, port);
+    }
 }
 
 #[derive(Deserialize)]
 struct RawConfig {
     id: Option<u32>,
-    ip: Option<String>,
-    port: Option<u16>,
+    listen_ip: Option<IpAddr>,
     adj: Option<adj::RawAdj>,
+    routes: Option<HashMap<u32, String>>,
 }
 
 impl RawConfig {
     fn merge(a: Self, b: Self) -> Self {
         return Self {
             id: a.id.or(b.id),
-            ip: a.ip.or(b.ip),
-            port: a.port.or(b.port),
+            listen_ip: a.listen_ip.or(b.listen_ip),
             adj: a.adj.or(b.adj),
+            routes: a.routes.or(b.routes),
         };
     }
 
@@ -72,13 +81,6 @@ impl RawConfig {
         return Ok(cfg);
     }
 
-    fn get_socket_addr(&self) -> Result<SocketAddr, AddrParseError> {
-        let ip_str = self.ip.as_deref().unwrap_or(DEFAULT_IP);
-        let ip: IpAddr = ip_str.parse()?;
-        let port = self.port.unwrap_or(DEFAULT_PORT);
-        return Ok(SocketAddr::new(ip, port));
-    }
-
     fn to_valid(&self) -> Result<Config, ConfigError> {
         let id = self.id.ok_or(ConfigError::MissingKey("id"))?;
         let raw_adj = self.adj.as_ref().ok_or(ConfigError::MissingKey("adj"))?;
@@ -88,8 +90,35 @@ impl RawConfig {
             return Err(ConfigError::InvalidValue("Id is greater than n"));
         }
 
-        let addr = self.get_socket_addr()?;
-        return Ok(Config { id, adj, addr });
+        let listen_ip = self
+            .listen_ip
+            .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+
+        let route_map = self.routes.clone().unwrap_or_else(|| HashMap::new());
+        let mut routes = Vec::<Authority>::with_capacity(adj.n as usize);
+        for i in 0..adj.n {
+            match route_map.get(&i) {
+                None => return Err(ConfigError::InvalidValue("Route list is incomplete")),
+                Some(route_str) => match route_str.parse::<Authority>() {
+                    Err(_) => {
+                        return Err(ConfigError::InvalidValue(
+                            "Route list has invalid authority",
+                        ));
+                    }
+                    Ok(authority) if authority.port() == None => {
+                        return Err(ConfigError::InvalidValue("A route is missing port"));
+                    }
+                    Ok(authority) => routes.push(authority),
+                },
+            }
+        }
+
+        return Ok(Config {
+            id,
+            listen_ip,
+            adj,
+            routes,
+        });
     }
 }
 
@@ -130,8 +159,12 @@ impl From<adj::AdjError> for ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ConfigError::MissingKey(key) => write!(f, "The \"{}\" setting is missing from the config.", key),
-            ConfigError::InvalidValue(value) => write!(f, "The \"{}\" setting value is invalid.", value),
+            ConfigError::MissingKey(key) => {
+                write!(f, "The \"{}\" setting is missing from the config.", key)
+            }
+            ConfigError::InvalidValue(value) => {
+                write!(f, "The \"{}\" setting value is invalid.", value)
+            }
             ConfigError::Adj(err) => write!(f, "The Adj matrix is incorrectly configured: {}", err),
             ConfigError::AddrParse(err) => write!(f, "Socket address parse error: {}", err),
             ConfigError::Io(err) => write!(f, "IO error: {}", err),
