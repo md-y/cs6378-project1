@@ -1,0 +1,10 @@
+[adj]
+n = 2
+matrix = [
+  [0, 1],
+  [0, 0],
+]
+
+[routes]
+0 = "dc01.utdallas.edu:25563"
+1 = "dc02.utdallas.edu:25563"
