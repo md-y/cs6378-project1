@@ -3,7 +3,7 @@
 use std::env;
 use std::error::Error;
 
-use log::{error};
+use log::error;
 
 use crate::config::Config;
 use crate::logger::setup_logger;
@@ -27,6 +27,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.is_empty() {
+        return Err(String::from(
+            "No arguments were provided. At least one path to a config file must be provided.",
+        )
+        .into());
+    }
+
     let config = Config::read_files(&args)?.unwrap();
     let session_layer = SessionLayer::new(&config);
     session_layer.run().await?;
