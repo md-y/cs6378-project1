@@ -6,8 +6,8 @@ use crate::session::SessionLayer;
 
 mod adj;
 mod config;
-mod session;
 mod message;
+mod session;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

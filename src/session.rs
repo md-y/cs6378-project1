@@ -27,7 +27,9 @@ impl<'a> SessionLayer<'a> {
     }
 
     fn on_required_connections_established(&self) {
-        println!("[Session Layer] Ready! All required connections for the P2P network have been made.");
+        println!(
+            "[Session Layer] Ready! All required connections for the P2P network have been made."
+        );
     }
 }
 

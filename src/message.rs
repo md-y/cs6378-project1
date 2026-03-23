@@ -32,7 +32,7 @@ impl fmt::Display for Message {
         let body_text = match self.body {
             MessageBody::InitRequest => "Init Request",
             MessageBody::InitResponse => "Init Response",
-            MessageBody::None => "Empty Body"
+            MessageBody::None => "Empty Body",
         };
         return write!(f, "{} from node {}", body_text, self.sender);
     }
