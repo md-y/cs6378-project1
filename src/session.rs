@@ -2,6 +2,7 @@ use std::{collections::HashMap, error::Error, time::Duration};
 
 use bson;
 use futures::future::join_all;
+use log::{error, info};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -27,9 +28,7 @@ impl<'a> SessionLayer<'a> {
     }
 
     fn on_required_connections_established(&self) {
-        println!(
-            "[Session Layer] Ready! All required connections for the P2P network have been made."
-        );
+        info!(target: "SESSION", "Ready! All required connections for the P2P network have been made.");
     }
 }
 
@@ -50,10 +49,7 @@ impl<'a> ConnectionManager<'a> {
 
     pub async fn add_connection(&self, node_id: u32, conn: Connection) {
         let mut conns = self.connections.lock().await;
-        println!(
-            "[Session Layer] Connection established with node {}",
-            node_id
-        );
+        info!(target: "SESSION", "Connection established with node {}", node_id);
         conns.insert(node_id, conn);
 
         let (outgoing, incoming) = self.config.get_nodes_to_connect();
@@ -77,14 +73,12 @@ impl<'a> ConnectionManager<'a> {
         let nodes = self.config.get_nodes_to_connect().0;
 
         if nodes.is_empty() {
-            println!(
-                "[Session Layer] This node isn't setup to make any connection requests, so it'll just listen."
-            );
+            info!(target: "SESSION", "This node isn't setup to make any connection requests, so it'll just listen.");
             return Ok(());
         }
 
-        println!(
-            "[Session Layer] This node will connect to {} nodes: {:?}",
+        info!(target: "SESSION",
+            "This node will connect to {} nodes: {:?}",
             nodes.len(),
             nodes
         );
@@ -116,14 +110,15 @@ impl<'a> ConnectionManager<'a> {
     async fn listen_requests(&self) -> Result<(), Box<dyn Error>> {
         let socket_addr = self.config.get_listen_address();
         let listener = TcpListener::bind(&socket_addr).await?;
-        println!("[Session Layer] Started listing on: {}", socket_addr);
+        info!(target: "SESSION", "Started listing on: {}", socket_addr);
 
         loop {
             let (stream, incoming_addr) = listener.accept().await?;
             let res = self.handle_incoming_request(stream).await;
             if let Err(err) = res {
-                eprintln!(
-                    "[Session Layer] Ignoring incoming request from {} because: {}",
+                error!(
+                    target: "SESSION",
+                    "Ignoring incoming request from {} because: {}",
                     incoming_addr, err
                 );
             }
@@ -162,7 +157,7 @@ impl Connection {
     pub async fn write_message(&mut self, message: Message) -> Result<(), Box<dyn Error>> {
         let bytes = bson::to_vec(&message)?;
         self.stream.write_all(&bytes).await?;
-        println!("[Session Layer] Send message: {}", message);
+        info!(target: "SESSION", "Sent message: {}", message);
         return Ok(());
     }
 
@@ -178,7 +173,7 @@ impl Connection {
         self.stream.read_exact(&mut doc_buf[4..]).await?;
 
         let msg: Message = bson::from_reader(&doc_buf[..])?;
-        println!("[Session Layer] Read message: {}", msg);
+        info!(target: "SESSION", "Read message: {}", msg);
         return Ok(msg);
     }
 }
@@ -188,24 +183,15 @@ async fn establish_stream(config: &Config, node: u32) -> TcpStream {
     let mut delay: u64 = 1;
     loop {
         if delay > 1 {
-            println!(
-                "[Session Layer] Waiting {} seconds before trying again...",
-                delay
-            );
+            info!(target: "SESSION", "Waiting {} seconds before trying again...", delay);
             sleep(Duration::from_secs(delay)).await;
         }
         delay *= 2;
-        println!(
-            "[Session Layer] Attempting to connect to node {} ({})",
-            node, addr
-        );
+        info!(target: "SESSION", "Attempting to connect to node {} ({})", node, addr);
         match TcpStream::connect(addr.clone()).await {
             Ok(stream) => return stream,
             Err(err) => {
-                eprintln!(
-                    "[Session Layer] Failed to connect to node {} ({}). {}",
-                    node, addr, err
-                );
+                error!(target: "SESSION", "Failed to connect to node {} ({}). {}", node, addr, err);
             }
         }
     }

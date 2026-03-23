@@ -3,18 +3,23 @@
 use std::env;
 use std::error::Error;
 
+use log::{error};
+
 use crate::config::Config;
+use crate::logger::setup_logger;
 use crate::session::SessionLayer;
 
 mod adj;
 mod config;
+mod logger;
 mod message;
 mod session;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    setup_logger();
     if let Err(err) = run().await {
-        eprintln!("An unrecoverable error was encountered!\n{}", err);
+        error!("An unrecoverable error was encountered!\n{}", err);
         return Err(err);
     }
     return Ok(());
