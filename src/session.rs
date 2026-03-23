@@ -162,6 +162,7 @@ impl Connection {
     pub async fn write_message(&mut self, message: Message) -> Result<(), Box<dyn Error>> {
         let bytes = bson::to_vec(&message)?;
         self.stream.write_all(&bytes).await?;
+        println!("[Session Layer] Send message: {}", message);
         return Ok(());
     }
 
@@ -177,6 +178,7 @@ impl Connection {
         self.stream.read_exact(&mut doc_buf[4..]).await?;
 
         let msg: Message = bson::from_reader(&doc_buf[..])?;
+        println!("[Session Layer] Read message: {}", msg);
         return Ok(msg);
     }
 }

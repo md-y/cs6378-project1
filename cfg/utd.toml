@@ -6,5 +6,5 @@ matrix = [
 ]
 
 [routes]
-0 = "dc01.utdallas.edu:25563"
-1 = "dc02.utdallas.edu:25563"
+0 = "dc01.utdallas.edu:70890"
+1 = "dc02.utdallas.edu:70890"
