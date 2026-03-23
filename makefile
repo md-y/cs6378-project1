@@ -1,5 +1,7 @@
+all: build
+
 build:
-    cargo build
+	cargo build
 
 lint:
-    cargo clippy
+	cargo clippy
