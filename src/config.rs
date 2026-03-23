@@ -2,9 +2,9 @@ use http::uri::Authority;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
-use std::{fmt, fs, io, vec};
+use std::{fmt, fs, io};
 
 use crate::adj;
 
@@ -37,20 +37,29 @@ impl Config {
         return SocketAddr::new(self.listen_ip, port);
     }
 
-    pub fn get_nodes_to_connect(&self) -> Vec<u32> {
+    /// Returns two vectors: first is nodes to connect to, and second is nodes to listen for
+    pub fn get_nodes_to_connect(&self) -> (Vec<u32>, Vec<u32>) {
         let i = self.id;
-        let mut nodes = Vec::<u32>::new();
+        let mut outgoing_nodes = Vec::<u32>::new();
+        let mut incoming_nodes = Vec::<u32>::new();
         for j in 0..(self.adj.n) {
-            if !self.adj.get(i, j) {
-                continue;
-            }
-            let bidirectional = self.adj.get(j, i);
+            let outgoing = self.adj.get(i, j);
+            let incoming = self.adj.get(j, i);
+            let bidirectional = outgoing && incoming;
             let has_priority = i < j;
-            if !bidirectional || (bidirectional && has_priority) {
-                nodes.push(j);
+            if bidirectional {
+                if has_priority {
+                    outgoing_nodes.push(j);
+                } else {
+                    incoming_nodes.push(j);
+                }
+            } else if outgoing {
+                outgoing_nodes.push(j);
+            } else if incoming {
+                incoming_nodes.push(j);
             }
         }
-        return nodes;
+        return (outgoing_nodes, incoming_nodes);
     }
 }
 
