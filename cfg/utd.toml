@@ -9,4 +9,4 @@ matrix = [
 [routes]
 0 = "dc01.utdallas.edu:50890"
 1 = "dc02.utdallas.edu:50890"
-2 = "dc02.utdallas.edu:50890"
+2 = "dc03.utdallas.edu:50890"
