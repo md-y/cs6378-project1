@@ -132,3 +132,9 @@ pub fn is_connected(&self) -> bool {
 ```
 
 At most, we visit each node once, and since we iterate $n$ times for each node, the worst case run time is $O(n^2)$.
+
+### Creating initial P2P
+
+As discussed, the session layer is in charge of making the P2P network. It does this fully concurrently. Specifically, each node is able to independently decide which nodes it needs to connect to. It then sends a request to each of these nodes concurrently. This means the time it takes to send all of these requests is the same as sending just one. Furthermore, all nodes do this at the same time, so the time it takes to bring up the P2P network is the length of the longest message propagation delay.
+
+We also retry any failed connections using exponential fall off. This means we will continue attempting to connect to the required nodes, but without overloading the network or any nodes.
