@@ -1,13 +1,18 @@
 [package]
 name = "cs6378-project1"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-bson = { version = "3.1.0", features = ["serde"] }
-futures = "0.3.32"
-http = "1.4.0"
-log = "0.4.29"
-serde = { version = "1.0.228", features = ["derive"] }
-tokio = { version = "1.50.0", features = ["full"] }
-toml = "1.0.7"
+bson = "2.15"
+futures = "0.3"
+http = "0.2"
+toml = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "~1.29", features = ["full"] }
+time = "=0.3.36"
+time-core = "=0.1.2"
+getrandom = "=0.2.17"
+rand = "=0.8.5"
+rand_core = "=0.6.4"
+uuid = "=1.6.1"

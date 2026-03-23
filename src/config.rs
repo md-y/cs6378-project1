@@ -68,7 +68,7 @@ struct RawConfig {
     id: Option<u32>,
     listen_ip: Option<IpAddr>,
     adj: Option<adj::RawAdj>,
-    routes: Option<HashMap<u32, String>>,
+    routes: Option<HashMap<String, String>>,
 }
 
 impl RawConfig {
@@ -121,7 +121,7 @@ impl RawConfig {
         let route_map = self.routes.clone().unwrap_or_else(|| HashMap::new());
         let mut routes = Vec::<Authority>::with_capacity(adj.n as usize);
         for i in 0..adj.n {
-            match route_map.get(&i) {
+            match route_map.get(&i.to_string()) {
                 None => return Err(ConfigError::InvalidValue("Route list is incomplete")),
                 Some(route_str) => match route_str.parse::<Authority>() {
                     Err(_) => {

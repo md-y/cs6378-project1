@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error, time::Duration};
 use bson;
 use futures::future::join_all;
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::Mutex,
     time::sleep,
@@ -160,7 +160,7 @@ impl Connection {
     }
 
     pub async fn write_message(&mut self, message: Message) -> Result<(), Box<dyn Error>> {
-        let bytes = bson::serialize_to_vec(&message)?;
+        let bytes = bson::to_vec(&message)?;
         self.stream.write_all(&bytes).await?;
         return Ok(());
     }
@@ -176,7 +176,7 @@ impl Connection {
         doc_buf[0..4].copy_from_slice(&len_buf);
         self.stream.read_exact(&mut doc_buf[4..]).await?;
 
-        let msg: Message = bson::deserialize_from_reader(&doc_buf[..])?;
+        let msg: Message = bson::from_reader(&doc_buf[..])?;
         return Ok(msg);
     }
 }
