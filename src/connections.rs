@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, time::Duration};
+use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 
 use bson;
 use futures::future::join_all;
@@ -16,14 +16,19 @@ use crate::{
     message::{Message, MessageBody},
 };
 
-pub struct ConnectionManager<'a> {
-    connections: Mutex<HashMap<u32, Connection>>,
-    config: &'a Config,
-    event_bus: &'a EventBus,
+pub struct ConnectionManager {
+    connections: Mutex<HashMap<u32, Arc<Connection>>>,
+    config: Arc<Config>,
+    event_bus: Arc<EventBus>,
 }
 
-impl<'a> ConnectionManager<'a> {
-    pub fn new(config: &'a Config, event_bus: &'a EventBus) -> Self {
+impl ConnectionManager {
+    pub async fn fork(&self) -> Result<(), Box<dyn Error>> {
+        tokio::try_join!(self.send_conn_requests(), self.listen_conn_requests())?;
+        return Ok(());
+    }
+
+    pub fn new(config: Arc<Config>, event_bus: Arc<EventBus>) -> Self {
         return Self {
             connections: Mutex::new(HashMap::new()),
             config,
@@ -31,36 +36,44 @@ impl<'a> ConnectionManager<'a> {
         };
     }
 
-    pub async fn add_connection(
-        &self,
-        node_id: u32,
-        conn: Connection,
-    ) -> Result<(), Box<dyn Error>> {
+    async fn add_connection(&self, node_id: u32, conn: Connection) -> Result<(), Box<dyn Error>> {
         let mut conns = self.connections.lock().await;
         info!(target: "SESSION", "Connection established with node {}", node_id);
-        conns.insert(node_id, conn);
+        conns.insert(node_id, Arc::new(conn));
+        drop(conns);
 
-        let (outgoing, incoming) = self.config.get_nodes_to_connect();
-        let mut required = outgoing.iter().chain(incoming.iter());
-        if required.all(|n| conns.contains_key(n)) {
-            println!("event emitted");
-            self.event_bus.emit(Event::NetworkEstablished)?;
-        }
+        self.start_conn_worker(node_id).await?;
+        self.event_bus.emit(Event::NewConnection(node_id))?;
 
         return Ok(());
     }
 
-    pub async fn remove_connection(&self, node_id: u32) {
+    async fn start_conn_worker(&self, node_id: u32) -> Result<(), Box<dyn Error>> {
+        let conns = self.connections.lock().await;
+        match conns.get(&node_id) {
+            Some(conn) => {
+                let new_conn = conn.clone();
+                tokio::spawn(async move {
+                    new_conn.run_worker().await;
+                });
+            }
+            None => {
+                return Err(format!(
+                    "Could not find node {node_id} in connections map in order to start worker"
+                )
+                .into());
+            }
+        };
+
+        return Ok(());
+    }
+
+    async fn remove_connection(&self, node_id: u32) {
         let mut conns = self.connections.lock().await;
         conns.remove(&node_id);
     }
 
-    pub async fn fork(&self) -> Result<(), Box<dyn Error>> {
-        tokio::try_join!(self.send_requests(), self.listen_requests())?;
-        return Ok(());
-    }
-
-    async fn send_requests(&self) -> Result<(), Box<dyn Error>> {
+    async fn send_conn_requests(&self) -> Result<(), Box<dyn Error>> {
         let nodes = self.config.get_nodes_to_connect().0;
 
         if nodes.is_empty() {
@@ -80,8 +93,8 @@ impl<'a> ConnectionManager<'a> {
     }
 
     pub async fn connect_to(&self, node_id: u32) -> Result<(), Box<dyn Error>> {
-        let stream = establish_stream(self.config, node_id).await;
-        let mut conn = Connection::new(stream);
+        let stream = establish_stream(&self.config, node_id).await;
+        let conn = Connection::new(stream, self.event_bus.clone());
 
         let msg = Message::new(&self.config, MessageBody::InitRequest, 1);
         conn.write_message(msg).await?;
@@ -98,7 +111,7 @@ impl<'a> ConnectionManager<'a> {
         };
     }
 
-    async fn listen_requests(&self) -> Result<(), Box<dyn Error>> {
+    async fn listen_conn_requests(&self) -> Result<(), Box<dyn Error>> {
         let socket_addr = self.config.get_listen_address();
         let listener = TcpListener::bind(&socket_addr).await?;
         info!(target: "SESSION", "Started listing on: {}", socket_addr);
@@ -117,7 +130,7 @@ impl<'a> ConnectionManager<'a> {
     }
 
     async fn handle_incoming_request(&self, stream: TcpStream) -> Result<(), Box<dyn Error>> {
-        let mut conn = Connection::new(stream);
+        let conn = Connection::new(stream, self.event_bus.clone());
         let msg = conn.read_message().await?;
 
         let is_init = match msg.body {
@@ -137,35 +150,60 @@ impl<'a> ConnectionManager<'a> {
 }
 
 pub struct Connection {
-    stream: TcpStream,
+    stream: Mutex<TcpStream>,
+    event_bus: Arc<EventBus>,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream) -> Self {
-        return Self { stream };
+    pub fn new(stream: TcpStream, event_bus: Arc<EventBus>) -> Self {
+        return Self {
+            stream: Mutex::new(stream),
+            event_bus,
+        };
     }
 
-    pub async fn write_message(&mut self, message: Message) -> Result<(), Box<dyn Error>> {
+    pub async fn write_message(&self, message: Message) -> Result<(), Box<dyn Error>> {
         let bytes = bson::to_vec(&message)?;
-        self.stream.write_all(&bytes).await?;
+        let mut stream = self.stream.lock().await;
+        stream.write_all(&bytes).await?;
         info!(target: "SESSION", "Sent message: {}", message);
         return Ok(());
     }
 
-    pub async fn read_message(&mut self) -> Result<Message, Box<dyn Error>> {
+    pub async fn read_message(&self) -> Result<Message, Box<dyn Error>> {
         let mut len_buf = [0u8; 4];
-        self.stream.read_exact(&mut len_buf).await?;
+        let mut stream = self.stream.lock().await;
+
+        // TODO: Handle connection dropping better
+
+        stream.read_exact(&mut len_buf).await?;
 
         // BSON uses little endian
         let len = i32::from_le_bytes(len_buf);
 
         let mut doc_buf = vec![0u8; len as usize];
         doc_buf[0..4].copy_from_slice(&len_buf);
-        self.stream.read_exact(&mut doc_buf[4..]).await?;
+        stream.read_exact(&mut doc_buf[4..]).await?;
 
         let msg: Message = bson::from_reader(&doc_buf[..])?;
         info!(target: "SESSION", "Read message: {}", msg);
         return Ok(msg);
+    }
+
+    pub async fn run_worker(&self) {
+        loop {
+            match self.read_message().await {
+                Err(err) => {
+                    info!(target: "SESSION", "Failed in read message: {}", err);
+                }
+                Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg)) {
+                    Err(err) => {
+                        info!(target: "SESSION", "Failed emit event for read message: {}", err);
+                    }
+                    Ok(_) => {}
+                },
+            }
+        }
     }
 }
 

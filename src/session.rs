@@ -6,33 +6,45 @@ use crate::{
     config::Config,
     connections::ConnectionManager,
 };
-use std::error::Error;
+use std::{collections::HashSet, error::Error, sync::Arc};
 
-pub struct SessionLayer<'a> {
-    config: &'a Config,
-    event_bus: &'a EventBus,
+pub struct SessionLayer {
+    config: Arc<Config>,
+    event_bus: Arc<EventBus>,
 }
 
-impl<'a> SessionLayer<'a> {
-    pub fn new(config: &'a Config, event_bus: &'a EventBus) -> SessionLayer<'a> {
+impl SessionLayer {
+    pub fn new(config: Arc<Config>, event_bus: Arc<EventBus>) -> SessionLayer {
         return SessionLayer { config, event_bus };
     }
 
     pub async fn run(&self) -> Result<(), Box<dyn Error>> {
-        let conn_manager = ConnectionManager::new(self.config, self.event_bus);
-        try_join!(conn_manager.fork(), self.listen_for_network_established())?;
+        let conn_manager = ConnectionManager::new(self.config.clone(), self.event_bus.clone());
+        try_join!(conn_manager.fork(), self.track_new_connections())?;
         return Ok(());
     }
 
-    async fn listen_for_network_established(&self) -> Result<(), Box<dyn Error>> {
+    async fn track_new_connections(&self) -> Result<(), Box<dyn Error>> {
         let mut receiver = self.event_bus.subscribe();
+
+        let conn_tuple = self.config.get_nodes_to_connect();
+        let mut remaining_conns: HashSet<u32> = HashSet::new();
+        for tuple in [conn_tuple.0, conn_tuple.1] {
+            for id in tuple {
+                remaining_conns.insert(id);
+            }
+        }
+
         loop {
             match receiver.recv().await {
-                Ok(Event::NetworkEstablished) => {
-                    info!(target: "SESSION", "Ready! All required connections for the P2P network have been made.");
-                    return Ok(());
+                Ok(Event::NewConnection(node_id)) => {
+                    remaining_conns.remove(&node_id);
+                    if remaining_conns.is_empty() {
+                        info!(target: "SESSION", "Ready! All required connections for the P2P network have been made.");
+                        return Ok(());
+                    }
                 }
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(RecvError::Closed) => {
                     return Err("Event bus closed before network was established".into());
                 }

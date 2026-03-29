@@ -4,7 +4,7 @@ use crate::message::Message;
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    NetworkEstablished,
+    NewConnection(u32),
     MessageReceived(Message),
 }
 

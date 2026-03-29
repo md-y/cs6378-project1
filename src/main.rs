@@ -2,6 +2,7 @@
 
 use std::env;
 use std::error::Error;
+use std::sync::Arc;
 
 use log::error;
 
@@ -38,8 +39,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let config = Config::read_files(&args)?.unwrap();
-    let event_bus = EventBus::new();
-    let session_layer = SessionLayer::new(&config, &event_bus);
+    let arc_config = Arc::new(config);
+    let event_bus = Arc::new(EventBus::new());
+    let session_layer = SessionLayer::new(arc_config, event_bus);
     session_layer.run().await?;
     return Ok(());
 }
