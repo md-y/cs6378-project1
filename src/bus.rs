@@ -1,4 +1,8 @@
-use tokio::sync::broadcast::{self, error::SendError, Receiver, Sender};
+use tokio::sync::broadcast::{
+    self,
+    error::{RecvError, SendError},
+    Receiver, Sender,
+};
 
 use crate::message::Message;
 
@@ -6,6 +10,7 @@ use crate::message::Message;
 pub enum Event {
     NewConnection(u32),
     MessageReceived(Message),
+    NetworkEstablished,
 }
 
 pub struct EventBus {
@@ -24,5 +29,18 @@ impl EventBus {
 
     pub fn emit(&self, event: Event) -> Result<usize, SendError<Event>> {
         return self.sender.send(event);
+    }
+
+    pub async fn wait_for<T, U: Fn(Event) -> Option<T>>(&self, func: U) -> Result<T, RecvError> {
+        let mut receiver = self.subscribe();
+        loop {
+            match receiver.recv().await {
+                Ok(ev) => match func(ev) {
+                    Some(data) => return Ok(data),
+                    None => {}
+                },
+                Err(err) => return Err(err),
+            }
+        }
     }
 }
