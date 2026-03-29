@@ -5,12 +5,15 @@ use std::error::Error;
 
 use log::error;
 
+use crate::bus::EventBus;
 use crate::config::Config;
 use crate::logger::setup_logger;
 use crate::session::SessionLayer;
 
 mod adj;
+mod bus;
 mod config;
+mod connections;
 mod logger;
 mod message;
 mod session;
@@ -35,7 +38,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let config = Config::read_files(&args)?.unwrap();
-    let session_layer = SessionLayer::new(&config);
+    let event_bus = EventBus::new();
+    let session_layer = SessionLayer::new(&config, &event_bus);
     session_layer.run().await?;
     return Ok(());
 }

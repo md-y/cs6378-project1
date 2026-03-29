@@ -4,14 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub struct Message {
     pub sender: u32,
     pub body: MessageBody,
+    pub hop_count: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum MessageBody {
     InitRequest,
     InitResponse,
@@ -19,10 +20,11 @@ pub enum MessageBody {
 }
 
 impl Message {
-    pub fn new(config: &Config, body: MessageBody) -> Self {
+    pub fn new(config: &Config, body: MessageBody, hop_count: u32) -> Self {
         return Self {
             sender: config.id,
             body,
+            hop_count,
         };
     }
 }
