@@ -82,16 +82,19 @@ impl FileLayer {
             if let Ok(msg) = res {
                 match msg.body {
                     MessageBody::FileDownloadRequest {
-                        file_name, slice, ..
+                        file_name, slice, total_slices, ..
                     } => {
+                        let data = self
+                                    .file_manifest
+                                    .get_file_data(self.config.get_file_dir(), &file_name)
+                                    .unwrap();
+                        let start_idx = (slice * (data.len() as u32) / total_slices) as usize;
+                        let end_idx = ((slice + 1) * (data.len() as u32) / total_slices) as usize;
                         let response = Message::new(
                             &self.config,
                             MessageBody::FileDownloadResponse {
                                 slice,
-                                data: self
-                                    .file_manifest
-                                    .get_file_data(self.config.get_file_dir(), &file_name)
-                                    .unwrap(),
+                                data: data[start_idx..end_idx].to_vec(),
                             },
                         );
                         if let Err(err) = self.sessions.send_message(&response, &msg.sender).await {
@@ -175,6 +178,7 @@ impl FileLayer {
             if results.is_empty() {
                 info!(target: "FILE", "Received no search results.");
             } else {
+                info!(target: "FILE", "A hop count of {} succeeded.", hop_count);
                 break;
             }
         }
@@ -268,6 +272,8 @@ impl FileLayer {
         }
 
         self.file_manifest.write_file_data(self.config.get_file_dir(), &items[0].file_name, &res.0).await?;
+
+        info!(target: "FILE", "Download complete!");
 
         return Ok(());
     }

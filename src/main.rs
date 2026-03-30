@@ -2,7 +2,6 @@
 
 use std::env;
 use std::error::Error;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::error;

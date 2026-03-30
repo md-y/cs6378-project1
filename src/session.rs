@@ -4,7 +4,7 @@ use tokio::{sync::broadcast::error::RecvError, try_join};
 use crate::{
     bus::{Event, EventBus},
     config::Config,
-    connections::{Connection, ConnectionManager},
+    connections::{ConnectionManager},
     message::Message,
 };
 use std::{collections::HashSet, error::Error, sync::Arc};

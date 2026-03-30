@@ -6,7 +6,7 @@ pub fn setup_logger() {
             writeln!(
                 buf,
                 "[{}] - [{}] - {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
                 record.target(),
                 record.args()
             )
