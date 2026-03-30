@@ -6,10 +6,7 @@ use log::{error, info};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{
-        broadcast::{Sender},
-        Mutex, MutexGuard,
-    },
+    sync::{broadcast::Sender, Mutex, MutexGuard},
     time::sleep,
 };
 
@@ -62,7 +59,12 @@ impl ConnectionManager {
         return Ok(());
     }
 
-    async fn get_connection(&self, node_id: &u32) -> Result<Arc<Connection>, Box<dyn Error>> {
+    pub async fn has_connection(&self, node_id: &u32) -> bool {
+        let conns = self.connections.lock().await;
+        return conns.contains_key(node_id);
+    }
+
+    pub async fn get_connection(&self, node_id: &u32) -> Result<Arc<Connection>, Box<dyn Error>> {
         let conns = self.connections.lock().await;
         return match conns.get(node_id) {
             None => Err(format!("Could not get connection for node {}", node_id).into()),
@@ -171,12 +173,25 @@ impl ConnectionManager {
         self.add_connection(msg.sender, conn).await?;
         return Ok(());
     }
+
+    pub async fn kill_connection(&self, node_id: &u32) -> Result<(), Box<dyn Error>> {
+        let mut conns = self.connections.lock().await;
+        match conns.remove(node_id) {
+            Some(conn) => drop(conn),
+            None => return Err(format!("Could not find connection with {}", node_id).into()),
+        }
+        info!(target: "SESSION",
+            "Killed connection with {}",
+            node_id
+        );
+        return Ok(());
+    }
 }
 
 pub struct Connection {
     stream: Mutex<TcpStream>,
     event_bus: Arc<EventBus>,
-    interrupt_bus: Sender<()>,
+    interrupt_bus: Sender<ConnectionInterruptEvent>,
 }
 
 impl Connection {
@@ -188,12 +203,13 @@ impl Connection {
         };
     }
 
+    pub async fn kill_worker(&self) -> Result<(), Box<dyn Error>> {
+        self.interrupt_bus.send(ConnectionInterruptEvent::Kill)?;
+        return Ok(());
+    }
+
     pub async fn write_message(&self, message: &Message) -> Result<(), Box<dyn Error>> {
         let bytes = bson::to_vec(&message)?;
-        match self.interrupt_bus.send(()) {
-            Err(err) => eprintln!("{}", err),
-            Ok(_) => {}
-        }
         let mut stream = self.get_stream_with_priority().await;
         stream.write_all(&bytes).await?;
         info!(target: "SESSION", "Sent message: {}", message);
@@ -204,7 +220,9 @@ impl Connection {
         match self.stream.try_lock() {
             Ok(res) => return res,
             Err(_) => {
-                self.interrupt_bus.send(()).unwrap();
+                self.interrupt_bus
+                    .send(ConnectionInterruptEvent::AllowWrite)
+                    .unwrap();
                 return self.stream.lock().await;
             }
         }
@@ -215,7 +233,10 @@ impl Connection {
         let mut stream = self.stream.lock().await;
         tokio::select! {
             res = Self::read_message_from_stream(&mut stream) => return res,
-            Ok(()) = rx.recv() => return Err("Stopped listening to messages so we can send a message".into()),
+            Ok(ev) = rx.recv() => match ev {
+                ConnectionInterruptEvent::AllowWrite => return Err("Stopped listening to messages so we can send a message".into()),
+                ConnectionInterruptEvent::Kill => return Err("This connection is being killed".into()),
+            },
         }
     }
 
@@ -241,10 +262,13 @@ impl Connection {
             match self.read_message().await {
                 Err(err) => {
                     let err_str = format!("Failed in read message: {}", err);
+                    // TODO: Make this error handling much better for part 3:
                     if err_str.contains("early eof") {
-                        // TODO: Make this better for part 3
                         info!(target: "SESSION", "The network has been broken, shutting down. Graceful handling will happen in part 3...");
                         std::process::exit(1);
+                    }
+                    if err_str.contains("connection is being killed") {
+                        break;
                     }
                     info!(target: "SESSION", "{}", err_str);
                 }
@@ -257,6 +281,12 @@ impl Connection {
             }
         }
     }
+}
+
+#[derive(Clone, Debug)]
+enum ConnectionInterruptEvent {
+    AllowWrite,
+    Kill,
 }
 
 async fn establish_stream(config: &Config, node: u32) -> TcpStream {

@@ -71,7 +71,7 @@ impl SearchLayer {
                 }
                 Ok(msg) => match msg.body {
                     MessageBody::SearchRequest { .. } => {
-                        if self.should_consume_request(&msg) {
+                        if self.should_consume_request(&msg).await {
                             if let Err(err) = self.try_consume_request(&msg).await {
                                 info!(target: "SEARCH", "{}", err);
                             }
@@ -94,9 +94,9 @@ impl SearchLayer {
         }
     }
 
-    fn should_consume_request(&self, message: &Message) -> bool {
+    async fn should_consume_request(&self, message: &Message) -> bool {
         return match &message.body {
-            MessageBody::SearchRequest { file_name, .. } => self.file_manifest.has_file(&file_name),
+            MessageBody::SearchRequest { file_name, .. } => self.file_manifest.has_file(&file_name).await,
             _ => false,
         };
     }
@@ -115,6 +115,8 @@ impl SearchLayer {
                         forwarder: self.config.id,
                         file_name: file_name.clone(),
                         reply_to: message.get_key(),
+                        // TODO: Do this more efficiently:
+                        file_size: self.file_manifest.get_file_data(self.config.get_file_dir(), file_name)?.len() as u64,
                     },
                 );
                 self.sessions.send_message(&response, &*forwarder).await?;

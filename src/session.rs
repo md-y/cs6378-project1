@@ -4,7 +4,7 @@ use tokio::{sync::broadcast::error::RecvError, try_join};
 use crate::{
     bus::{Event, EventBus},
     config::Config,
-    connections::ConnectionManager,
+    connections::{Connection, ConnectionManager},
     message::Message,
 };
 use std::{collections::HashSet, error::Error, sync::Arc};
@@ -71,5 +71,22 @@ impl SessionLayer {
                 }
             }
         }
+    }
+
+    pub async fn establish_download_streams(&self, targets: &Vec<u32>) -> Result<Vec<u32>, Box<dyn Error>> {
+        let mut temp_conns: Vec<u32> = Vec::new();
+        for target in targets {
+            if self.conn_manager.has_connection(target).await {
+                continue;
+            }
+            self.conn_manager.connect_to(*target).await?;
+            temp_conns.push(*target);
+        }
+
+        return Ok(temp_conns);
+    }
+
+    pub async fn kill_connection(&self, node_id: &u32) -> Result<(), Box<dyn Error>> {
+        return self.conn_manager.kill_connection(&node_id).await;
     }
 }

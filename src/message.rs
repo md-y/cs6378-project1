@@ -27,6 +27,7 @@ pub enum MessageBody {
         forwarder: u32,
         file_name: String,
         reply_to: String,
+        file_size: u64,
     },
     FileDownloadRequest {
         file_name: String,
@@ -34,7 +35,7 @@ pub enum MessageBody {
         total_slices: u32,
     },
     FileDownloadResponse {
-        session: String,
+        slice: u32,
         data: Vec<u8>,
     },
 }
@@ -94,10 +95,10 @@ impl fmt::Display for Message {
                     file_name, slice, total_slices,
                 )
             }
-            MessageBody::FileDownloadResponse { session, data } => {
+            MessageBody::FileDownloadResponse { data, .. } => {
                 format!(
-                    "File Download Response for session {} ({} bytes)",
-                    session,
+                    "File Download Response from {} ({} bytes)",
+                    self.sender,
                     data.len(),
                 )
             }
