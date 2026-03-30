@@ -9,8 +9,9 @@ use crate::message::Message;
 #[derive(Clone, Debug)]
 pub enum Event {
     NewConnection(u32),
-    MessageReceived(Message),
+    MessageReceived(Message, u32),
     NetworkEstablished,
+    ShouldForward(Message, u32),
 }
 
 pub struct EventBus {

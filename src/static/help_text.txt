@@ -1,0 +1,2 @@
+help - Prints this help text
+find <file name> - Searches the network for a file with the specified file name

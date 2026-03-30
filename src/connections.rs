@@ -6,7 +6,10 @@ use log::{error, info};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{
+        broadcast::{error::SendError, Sender},
+        Mutex, MutexGuard,
+    },
     time::sleep,
 };
 
@@ -36,6 +39,37 @@ impl ConnectionManager {
         };
     }
 
+    pub async fn broadcast(
+        &self,
+        message: &Message,
+        targets: &Vec<u32>,
+    ) -> Vec<Result<(), Box<dyn Error>>> {
+        let tasks = targets.iter().map(async |t| -> Result<(), Box<dyn Error>> {
+            let conn = self.get_connection(t).await?;
+            conn.write_message(message).await?;
+            return Ok(());
+        });
+        return join_all(tasks).await;
+    }
+
+    pub async fn send_message(
+        &self,
+        message: &Message,
+        target: &u32,
+    ) -> Result<(), Box<dyn Error>> {
+        let conn = self.get_connection(target).await?;
+        conn.write_message(message).await?;
+        return Ok(());
+    }
+
+    async fn get_connection(&self, node_id: &u32) -> Result<Arc<Connection>, Box<dyn Error>> {
+        let conns = self.connections.lock().await;
+        return match conns.get(node_id) {
+            None => Err(format!("Could not get connection for node {}", node_id).into()),
+            Some(conn) => Ok(conn.clone()),
+        };
+    }
+
     async fn add_connection(&self, node_id: u32, conn: Connection) -> Result<(), Box<dyn Error>> {
         let mut conns = self.connections.lock().await;
         info!(target: "SESSION", "Connection established with node {}", node_id);
@@ -49,21 +83,11 @@ impl ConnectionManager {
     }
 
     async fn start_conn_worker(&self, node_id: u32) -> Result<(), Box<dyn Error>> {
-        let conns = self.connections.lock().await;
-        match conns.get(&node_id) {
-            Some(conn) => {
-                let new_conn = conn.clone();
-                tokio::spawn(async move {
-                    new_conn.run_worker().await;
-                });
-            }
-            None => {
-                return Err(format!(
-                    "Could not find node {node_id} in connections map in order to start worker"
-                )
-                .into());
-            }
-        };
+        let conn = self.get_connection(&node_id).await?;
+        let new_conn = conn.clone();
+        tokio::spawn(async move {
+            new_conn.run_worker(node_id).await;
+        });
 
         return Ok(());
     }
@@ -96,8 +120,8 @@ impl ConnectionManager {
         let stream = establish_stream(&self.config, node_id).await;
         let conn = Connection::new(stream, self.event_bus.clone());
 
-        let msg = Message::new(&self.config, MessageBody::InitRequest, 1);
-        conn.write_message(msg).await?;
+        let msg = Message::new(&self.config, MessageBody::InitRequest);
+        conn.write_message(&msg).await?;
 
         let msg = conn.read_message().await?;
         match msg.body {
@@ -141,8 +165,8 @@ impl ConnectionManager {
             return Err(String::from("Initial message was not a connection init request.").into());
         }
 
-        let res_msg = Message::new(&self.config, MessageBody::InitResponse, 1);
-        conn.write_message(res_msg).await?;
+        let res_msg = Message::new(&self.config, MessageBody::InitResponse);
+        conn.write_message(&res_msg).await?;
 
         self.add_connection(msg.sender, conn).await?;
         return Ok(());
@@ -152,6 +176,7 @@ impl ConnectionManager {
 pub struct Connection {
     stream: Mutex<TcpStream>,
     event_bus: Arc<EventBus>,
+    interrupt_bus: Sender<()>,
 }
 
 impl Connection {
@@ -159,20 +184,43 @@ impl Connection {
         return Self {
             stream: Mutex::new(stream),
             event_bus,
+            interrupt_bus: tokio::sync::broadcast::channel(64).0,
         };
     }
 
-    pub async fn write_message(&self, message: Message) -> Result<(), Box<dyn Error>> {
+    pub async fn write_message(&self, message: &Message) -> Result<(), Box<dyn Error>> {
         let bytes = bson::to_vec(&message)?;
-        let mut stream = self.stream.lock().await;
+        match self.interrupt_bus.send(()) {
+            Err(err) => eprintln!("{}", err),
+            Ok(_) => {}
+        }
+        let mut stream = self.get_stream_with_priority().await;
         stream.write_all(&bytes).await?;
         info!(target: "SESSION", "Sent message: {}", message);
         return Ok(());
     }
 
+    async fn get_stream_with_priority(&self) -> MutexGuard<'_, TcpStream> {
+        match self.stream.try_lock() {
+            Ok(res) => return res,
+            Err(_) => {
+                self.interrupt_bus.send(()).unwrap();
+                return self.stream.lock().await;
+            }
+        }
+    }
+
     pub async fn read_message(&self) -> Result<Message, Box<dyn Error>> {
-        let mut len_buf = [0u8; 4];
+        let mut rx = self.interrupt_bus.subscribe();
         let mut stream = self.stream.lock().await;
+        tokio::select! {
+            res = Self::read_message_from_stream(&mut stream) => return res,
+            Ok(()) = rx.recv() => return Err("Stopped listening to messages so we can send a message".into()),
+        }
+    }
+
+    async fn read_message_from_stream(stream: &mut TcpStream) -> Result<Message, Box<dyn Error>> {
+        let mut len_buf = [0u8; 4];
 
         // TODO: Handle connection dropping better
 
@@ -190,13 +238,14 @@ impl Connection {
         return Ok(msg);
     }
 
-    pub async fn run_worker(&self) {
+    pub async fn run_worker(&self, node_id: u32) {
         loop {
+            info!(target: "SESSION", "Listening for more messages...");
             match self.read_message().await {
                 Err(err) => {
                     info!(target: "SESSION", "Failed in read message: {}", err);
                 }
-                Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg)) {
+                Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg, node_id)) {
                     Err(err) => {
                         info!(target: "SESSION", "Failed emit event for read message: {}", err);
                     }

@@ -1,6 +1,6 @@
 use http::uri::Authority;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -60,6 +60,17 @@ impl Config {
             }
         }
         return (outgoing_nodes, incoming_nodes);
+    }
+
+    pub fn get_adjacent_nodes(&self) -> HashSet<u32> {
+        let i = self.id;
+        let mut set = HashSet::new();
+        for j in 0..(self.adj.n) {
+            if (self.adj.get(i, j) || self.adj.get(j, i)) && i != j {
+                set.insert(j);
+            }
+        }
+        return set;
     }
 }
 
