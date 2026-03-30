@@ -7,7 +7,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{
-        broadcast::{error::SendError, Sender},
+        broadcast::{Sender},
         Mutex, MutexGuard,
     },
     time::sleep,
@@ -86,7 +86,7 @@ impl ConnectionManager {
         let conn = self.get_connection(&node_id).await?;
         let new_conn = conn.clone();
         tokio::spawn(async move {
-            new_conn.run_worker(node_id).await;
+            new_conn.run_worker().await;
         });
 
         return Ok(());
@@ -221,9 +221,6 @@ impl Connection {
 
     async fn read_message_from_stream(stream: &mut TcpStream) -> Result<Message, Box<dyn Error>> {
         let mut len_buf = [0u8; 4];
-
-        // TODO: Handle connection dropping better
-
         stream.read_exact(&mut len_buf).await?;
 
         // BSON uses little endian
@@ -238,14 +235,20 @@ impl Connection {
         return Ok(msg);
     }
 
-    pub async fn run_worker(&self, node_id: u32) {
+    pub async fn run_worker(&self) {
         loop {
             info!(target: "SESSION", "Listening for more messages...");
             match self.read_message().await {
                 Err(err) => {
-                    info!(target: "SESSION", "Failed in read message: {}", err);
+                    let err_str = format!("Failed in read message: {}", err);
+                    if err_str.contains("early eof") {
+                        // TODO: Make this better for part 3
+                        info!(target: "SESSION", "The network has been broken, shutting down. Graceful handling will happen in part 3...");
+                        std::process::exit(1);
+                    }
+                    info!(target: "SESSION", "{}", err_str);
                 }
-                Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg, node_id)) {
+                Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg)) {
                     Err(err) => {
                         info!(target: "SESSION", "Failed emit event for read message: {}", err);
                     }

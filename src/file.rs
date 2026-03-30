@@ -57,41 +57,9 @@ impl FileLayer {
 
         info!(target: "FILE", "Initialized file layer since the network has been established.");
 
-        join!(
-            self.run_command_processing(),
-            self.run_listen_search_requests()
-        );
+        join!(self.run_command_processing());
 
         return Ok(());
-    }
-
-    async fn run_listen_search_requests(&self) {
-        loop {
-            let res = self
-                .event_bus
-                .wait_for(|ev| match ev {
-                    Event::MessageReceived(msg, forwarder) => Some((msg, forwarder)),
-                    _ => None,
-                })
-                .await;
-
-            match res {
-                Err(err) => {
-                    info!(target: "SEARCH", "Error encountered while listening to messages to forward: {}", err);
-                }
-                Ok((msg, forwarder)) => {
-                    if self.should_consume(&msg) {
-                        if let Err(err) = self.consume_message(&msg, forwarder).await {
-                            info!(target: "SEARCH", "Failed to send response message for consumed search request: {}", err);
-                        }
-                    } else {
-                        self.event_bus
-                            .emit(Event::ShouldForward(msg, forwarder))
-                            .unwrap();
-                    }
-                }
-            };
-        }
     }
 
     async fn run_command_processing(&self) {
@@ -126,40 +94,6 @@ impl FileLayer {
         match cmd {
             Command::Help => Self::print_help(),
             Command::Find(file_name) => self.find_file(file_name).await?,
-        }
-
-        return Ok(());
-    }
-
-    fn should_consume(&self, message: &Message) -> bool {
-        match &message.body {
-            MessageBody::SearchRequest { file_name, .. } => {
-                return self.file_manifest.has_file(file_name);
-            }
-            _ => {
-                return false;
-            }
-        }
-    }
-
-    async fn consume_message(
-        &self,
-        message: &Message,
-        forwarder: u32,
-    ) -> Result<(), Box<dyn Error>> {
-        match &message.body {
-            MessageBody::SearchRequest { file_name, .. } => {
-                info!(target: "FILE", "Consumed search request for {} from {}.", file_name, message.sender);
-                let response = Message::new(
-                    &self.config,
-                    MessageBody::SearchResponse {
-                        file_name: file_name.clone(),
-                        reply_to: message.get_key(),
-                    },
-                );
-                self.sessions.send_message(&response, &forwarder).await?;
-            }
-            _ => panic!(),
         }
 
         return Ok(());
@@ -210,7 +144,7 @@ impl FileLayer {
         let stored_results = self.last_search_result.lock().await;
         println!("Selectable search results:");
         for (key, val) in stored_results.iter() {
-            println!("{} = ({}, {})", key, val.file_name, val.node_id);
+            println!("{} = (\"{}\", node {})", key, val.file_name, val.node_id);
         }
     }
 
@@ -230,12 +164,7 @@ impl FileLayer {
                 received = receiver.recv() => {
                     match received {
                         Ok(event) => match event {
-                            Event::MessageReceived(msg, _) => match msg.body {
-                                MessageBody::SearchResponse {..} => {
-                                    results.push(FileSearchResult::new(msg));
-                                },
-                                _ => {},
-                            },
+                            Event::FileFound(result) => results.push(result),
                             _ => {},
                         },
                         Err(RecvError::Closed) => break,
@@ -257,17 +186,18 @@ pub enum Command {
     Find(String),
 }
 
+#[derive(Clone, Debug)]
 pub struct FileSearchResult {
     node_id: u32,
     file_name: String,
 }
 
 impl FileSearchResult {
-    pub fn new(message: Message) -> Self {
-        return match message.body {
+    pub fn new(message: &Message) -> Self {
+        return match &message.body {
             MessageBody::SearchResponse { file_name, .. } => Self {
                 node_id: message.sender,
-                file_name,
+                file_name: file_name.clone(),
             },
             _ => panic!(),
         };

@@ -1,12 +1,13 @@
 use log::info;
 
 use crate::{
-    bus::{Event, EventBus},
-    config::Config,
-    message::{Message, MessageBody},
-    session::SessionLayer,
+    bus::{Event, EventBus}, config::Config, file::FileSearchResult, file_manifest::FileManifest, message::{Message, MessageBody}, session::SessionLayer
 };
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
 pub struct SearchLayer {
@@ -14,14 +15,23 @@ pub struct SearchLayer {
     event_bus: Arc<EventBus>,
     sessions: Arc<SessionLayer>,
     seen_messages: Mutex<HashMap<String, SeenMessage>>,
+    our_requests: Mutex<HashSet<String>>,
+    file_manifest: Arc<FileManifest>,
 }
 
 impl SearchLayer {
-    pub fn new(config: Arc<Config>, event_bus: Arc<EventBus>, sessions: Arc<SessionLayer>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        event_bus: Arc<EventBus>,
+        sessions: Arc<SessionLayer>,
+        file_manifest: Arc<FileManifest>,
+    ) -> Self {
         return Self {
             config,
             event_bus,
             sessions,
+            file_manifest,
+            our_requests: Mutex::new(HashSet::new()),
             seen_messages: Mutex::new(HashMap::new()),
         };
     }
@@ -46,11 +56,11 @@ impl SearchLayer {
             let res = self
                 .event_bus
                 .wait_for(|ev| match ev {
-                    Event::MessageReceived(msg, forwarder) => match msg.body {
-                        MessageBody::SearchResponse { .. } => Some((msg, forwarder)),
+                    Event::MessageReceived(msg) => match msg.body {
+                        MessageBody::SearchRequest { .. } => Some(msg),
+                        MessageBody::SearchResponse { .. } => Some(msg),
                         _ => None,
                     },
-                    Event::ShouldForward(msg, forwarder) => Some((msg, forwarder)),
                     _ => None,
                 })
                 .await;
@@ -59,14 +69,22 @@ impl SearchLayer {
                 Err(err) => {
                     info!(target: "SEARCH", "Error encountered while listening to messages to forward: {}", err);
                 }
-                Ok((msg, forwarder)) => match msg.body {
+                Ok(msg) => match msg.body {
                     MessageBody::SearchRequest { .. } => {
-                        if let Err(err) = self.try_forward_request(&msg, forwarder).await {
+                        if self.should_consume_request(&msg) {
+                            if let Err(err) = self.try_consume_request(&msg).await {
+                                info!(target: "SEARCH", "{}", err);
+                            }
+                        } else if let Err(err) = self.try_forward_request(&msg).await {
                             info!(target: "SEARCH", "{}", err);
                         }
                     }
                     MessageBody::SearchResponse { .. } => {
-                        if let Err(err) = self.try_forward_response(&msg).await {
+                        if self.should_consume_response(&msg).await {
+                            if let Err(err) = self.try_consume_response(&msg).await {
+                                info!(target: "SEARCH", "{}", err);
+                            }
+                        } else if let Err(err) = self.try_forward_response(&msg).await {
                             info!(target: "SEARCH", "{}", err);
                         }
                     }
@@ -76,14 +94,67 @@ impl SearchLayer {
         }
     }
 
-    async fn try_forward_request(
-        &self,
-        msg: &Message,
-        forwarder: u32,
-    ) -> Result<(), Box<dyn Error>> {
-        let hop_count = match msg.body {
-            MessageBody::SearchRequest { hop_count, .. } => hop_count,
-            _ => 0,
+    fn should_consume_request(&self, message: &Message) -> bool {
+        return match &message.body {
+            MessageBody::SearchRequest { file_name, .. } => self.file_manifest.has_file(&file_name),
+            _ => false,
+        };
+    }
+
+    async fn try_consume_request(&self, message: &Message) -> Result<(), Box<dyn Error>> {
+        match &message.body {
+            MessageBody::SearchRequest {
+                file_name,
+                forwarder,
+                ..
+            } => {
+                info!(target: "SEARCH", "Received request for {}, which we can fulfil. Consuming request and responding.", file_name);
+                let response = Message::new(
+                    &self.config,
+                    MessageBody::SearchResponse {
+                        forwarder: self.config.id,
+                        file_name: file_name.clone(),
+                        reply_to: message.get_key(),
+                    },
+                );
+                self.sessions.send_message(&response, &*forwarder).await?;
+                return Ok(());
+            }
+            _ => panic!(),
+        };
+    }
+
+    async fn should_consume_response(&self, message: &Message) -> bool {
+        return match &message.body {
+            MessageBody::SearchResponse { reply_to, .. } => {
+                self.our_requests.lock().await.contains(reply_to)
+            }
+            _ => false,
+        };
+    }
+
+    async fn try_consume_response(&self, message: &Message) -> Result<(), Box<dyn Error>> {
+        match &message.body {
+            MessageBody::SearchResponse {
+                file_name,
+                ..
+            } => {
+                info!(target: "SEARCH", "Received search response for our request for {}", file_name);
+                self.event_bus.emit(Event::FileFound(FileSearchResult::new(message)))?;
+                return Ok(());
+            }
+            _ => panic!(),
+        };
+    }
+
+    async fn try_forward_request(&self, msg: &Message) -> Result<(), Box<dyn Error>> {
+        let (hop_count, forwarder) = match msg.body {
+            MessageBody::SearchRequest {
+                hop_count,
+                forwarder,
+                ..
+            } => (hop_count, forwarder),
+            _ => panic!(),
         };
 
         if hop_count == 0 {
@@ -103,9 +174,11 @@ impl SearchLayer {
             MessageBody::SearchRequest {
                 hop_count,
                 file_name,
+                ..
             } => MessageBody::SearchRequest {
                 hop_count: hop_count - 1,
                 file_name: file_name.clone(),
+                forwarder: self.config.id,
             },
             _ => panic!(), // Impossible to reach
         };
@@ -172,8 +245,13 @@ impl SearchLayer {
             MessageBody::SearchRequest {
                 hop_count: hop_count.clone(),
                 file_name: file_name.clone(),
+                forwarder: self.config.id,
             },
         );
+
+        let mut requests = self.our_requests.lock().await;
+        requests.insert(message.get_key());
+        drop(requests);
 
         let targets = &self.get_broadcastable_nodes(&vec![]);
         self.sessions.broadcast(&message, targets).await;

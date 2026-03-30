@@ -62,6 +62,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         arc_config.clone(),
         event_bus.clone(),
         arc_session_layer.clone(),
+        arc_file_manifest.clone(),
     );
     let arc_search_layer = Arc::new(search_layer);
 

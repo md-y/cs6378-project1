@@ -4,14 +4,14 @@ use tokio::sync::broadcast::{
     Receiver, Sender,
 };
 
-use crate::message::Message;
+use crate::{file::FileSearchResult, message::Message};
 
 #[derive(Clone, Debug)]
 pub enum Event {
     NewConnection(u32),
-    MessageReceived(Message, u32),
+    MessageReceived(Message),
     NetworkEstablished,
-    ShouldForward(Message, u32),
+    FileFound(FileSearchResult)
 }
 
 pub struct EventBus {

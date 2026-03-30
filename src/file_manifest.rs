@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs,
-    path::{self, Path},
+    path::{Path},
 };
 
 #[derive(Deserialize, Serialize)]

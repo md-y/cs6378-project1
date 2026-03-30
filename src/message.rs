@@ -19,10 +19,12 @@ pub enum MessageBody {
     InitRequest,
     InitResponse,
     SearchRequest {
+        forwarder: u32,
         hop_count: u32,
         file_name: String,
     },
     SearchResponse {
+        forwarder: u32,
         file_name: String,
         reply_to: String,
     },
