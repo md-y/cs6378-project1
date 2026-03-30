@@ -14,19 +14,27 @@ The P2P system uses a layered architecture built on top of TCP/IP. Specifically,
 To support these layers, we have a core data structure called `Config`.
 This stores information about the machine that the process is running on, the `adj` matrix, $n$, and all the routing info. When the process starts, `Config` is built by reading from the configuration files. If it is not valid, the program fails to start, including if `adj` is not a connected graph.
 
+There is also the `FileManifest` data structure. This represents the file $F_i$ that lists which file is on which machine. This is synced with an actual file on disk, named `manifest.toml`. Each process has its own file. The data structure has many abstractions for reading and writing the data based on what is `manifest.toml`.
+
+There is also the core `EventBus` data structure. This allows for messages to be sent between the layers, allowing for easy communication. Essentially, each layer has its own listener thread or coroutine that listens for events relevant to that layer (e.g. the file layer listens for file download requests). This is the main way the layers communicate to each other, and are notified of global state changes.
+
 ## Modules
 
 Each layer has its own module.file:
 
 - `session.rs`
-- `search.rs` (to be added later)
-- `file.rs` (to be added later)
+	- `connections.rs` (helper structs for the session layer)
+- `search.rs`
+- `file.rs`
 
 Beyond these modules, we have these utility modules that support the layers:
 
 - `config.rs` (the core module for `Config` that manages deserialization and verification)
 - `adj.rs` (`adj`-specific logic used by the `Config` module, mostly in charge of verifying `adj` is connected)
 - `message.rs` (contains `Message` enum that specifies each message type)
+- `bus.rs` (contains the `EventBus` struct and all event types)
+- `file_manifest.rs` (contains the `FileManifest` struct and all associated logic)
+- `logger.rs` (the basic logging template used by all the layers)
 
 We will go into more detail on these later.
 
@@ -74,28 +82,45 @@ In addition to sending connection requests, the session layer also listens for a
 
 All successful connections are recorded in a shared hash map. This hash map is protected behind a mutex since connections are in separate coroutines.
 
-Once all the required connections have been established (as determined by `adj`), the node is considered ready and the higher layers are enabled.
+Once all the required connections have been established (as determined by `adj`), the node is considered ready, and the higher layers are enabled. This is done by broadcasting the `NetworkEstablished` event.
 
-### `search.rs` and `file.rs`
+### `search.rs`
 
-These layers will be implemented in future parts. However, they will work broadly as such.
-
-The search layer handles navigating the network topology. It accepts all non-init messages from the session layer. The message types include:
+The search layer handles navigating the network topology. It accepts two types of messages from the event bus:
 
 - `SearchRequest` (these messages include the sender and desired files, and each node that receives it along the way will forward it)
 - `SearchResponse` (the response to `SearchRequest` containing file information and the node that possesses it)
 
 The layer sends out `SearchRequest` messages as a broadcast along its edges if it does not know where the file is located. This means that it can receive many `SearchResponse` messages per `SearchRequest` if multiple nodes have the file. To account for this (and to accept random `SearchResponse` messages), we store the received file information in another mutex-protected hash map. We use this stored information for the file layer.
 
+The only time we do not forward a message is if we consume it. We consume a request if we have the file contain in the request, and we consume a response if we were the original requestor. Consuming just involves sending the appropriate response message and/or sending the appropriate event to the next layer along the bus.
+
+### `file.rs`
+
 The file layer also handles specific message types:
- - `FileRequest` (message contains which file the sender wants and which parts of it)
- - `FileResponse` (chunk of the requested file, terminated by a message with the file hash)
+ - `FileRequest` (message contains which file the sender wants and which slice of it)
+ - `FileResponse` (slice of the requested file)
 
-When the use requests a file, the file layer uses the stored file information from the search layer to request the file-holder node(s). It then listens for file chunks until the file is complete. It then verifies the file is valid by comparing the combined result to the hash.
+When the use requests a file, the file layer uses the stored file information from the search layer to request the file-holder node(s). It then listens for file slices until the file is complete. All of these requests are done concurrently, so the time to download a file is just the length of the slowest transmission.
 
-The file layer also records file information if forwards in its local file object.
+The file layer also records file information if forwards in its local file object using `FileManifest`.
 
-For both of these layers, messages are each handled in their own coroutine. This allows each node to handle multiple requests at a time.
+#### `bus.rs` (and other buses)
+
+The event bus is based around Tokio's [broadcast channel](https://docs.rs/tokio/latest/tokio/sync/broadcast/fn.channel.html).  However, there are a few abstractions on top of the raw channel data structure that make it easier to use. Mainly, the `wait_for` function takes a closure that filters for the exact event type required by the subscriber. This makes it easy for each layer to only listen for the events it cares about.
+
+Outside the main event bus, we have local buses per connection. These are used to force the TCP connection worker thread to release the mutex on the TCP stream so we can either write to the stream, or kill the connection.
+
+Overall, I chose to use this event bus-based system instead of callbacks. In my experience, callbacks are an antipattern and are harder to scale.
+
+## CLI
+
+From the end user's perspective, it is a normal CLI to download files. These are the commands:
+- `help` (lists this help info)
+- `find [filename]` (searches the network for `filename` and prints the found info)
+- `download [node id 1] [node id 2] ...` (download based on the result of `find` concurrently from each specified node)
+
+The CLI is managed by the file layer, since it is in charge of exuting most of these commands.
 
 ## Algorithms
 
@@ -138,3 +163,12 @@ At most, we visit each node once, and since we iterate $n$ times for each node, 
 As discussed, the session layer is in charge of making the P2P network. It does this fully concurrently. Specifically, each node is able to independently decide which nodes it needs to connect to. It then sends a request to each of these nodes concurrently. This means the time it takes to send all of these requests is the same as sending just one. Furthermore, all nodes do this at the same time, so the time it takes to bring up the P2P network is the length of the longest message propagation delay.
 
 We also retry any failed connections using exponential fall off. This means we will continue attempting to connect to the required nodes, but without overloading the network or any nodes.
+
+### Hop Count Delay
+
+Currently, the hop count delay for each file search request is simply:
+$$
+t_{\text{hop\_count}}=1\text{second} * \text{hop\_count}
+$$
+
+This may change in the future, but it is nonetheless monotonic.
