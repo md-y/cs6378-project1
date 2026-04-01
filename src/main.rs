@@ -2,6 +2,7 @@
 
 use std::env;
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::error;
@@ -48,7 +49,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let config = Config::read_files(&args)?.unwrap();
     let arc_config = Arc::new(config);
 
-    let manifest_path = arc_config.get_manifest_path();
+    let manifest_path: PathBuf = [".", "data", &arc_config.id.to_string(), "manifest.toml"].iter().collect();
     let file_manifest = FileManifest::read_or_generate(&manifest_path).await?;
     let arc_file_manifest = Arc::new(file_manifest);
 

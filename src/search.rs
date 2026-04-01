@@ -116,7 +116,7 @@ impl SearchLayer {
                         file_name: file_name.clone(),
                         reply_to: message.get_key(),
                         // TODO: Do this more efficiently:
-                        file_size: self.file_manifest.get_file_data(self.config.get_file_dir(), file_name)?.len() as u64,
+                        file_size: self.file_manifest.get_file_data(file_name)?.len() as u64,
                     },
                 );
                 self.sessions.send_message(&response, &*forwarder).await?;

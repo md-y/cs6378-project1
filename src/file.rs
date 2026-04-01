@@ -86,7 +86,7 @@ impl FileLayer {
                     } => {
                         let data = self
                                     .file_manifest
-                                    .get_file_data(self.config.get_file_dir(), &file_name)
+                                    .get_file_data(&file_name)
                                     .unwrap();
                         let start_idx = (slice * (data.len() as u32) / total_slices) as usize;
                         let end_idx = ((slice + 1) * (data.len() as u32) / total_slices) as usize;
@@ -271,7 +271,7 @@ impl FileLayer {
             self.sessions.kill_connection(&temp_conn).await?;
         }
 
-        self.file_manifest.write_file_data(self.config.get_file_dir(), &items[0].file_name, &res.0).await?;
+        self.file_manifest.write_file_data(&items[0].file_name, &res.0).await?;
 
         info!(target: "FILE", "Download complete!");
 

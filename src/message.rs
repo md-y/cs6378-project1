@@ -92,7 +92,9 @@ impl fmt::Display for Message {
             } => {
                 format!(
                     "File Download Request for file {} (slice {} of {})",
-                    file_name, slice, total_slices,
+                    file_name,
+                    slice + 1,
+                    total_slices,
                 )
             }
             MessageBody::FileDownloadResponse { data, .. } => {

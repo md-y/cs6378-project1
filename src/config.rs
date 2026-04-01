@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::{fmt, fs, io};
 
 use crate::adj;
@@ -71,14 +71,6 @@ impl Config {
             }
         }
         return set;
-    }
-
-    pub fn get_file_dir(&self) -> PathBuf {
-        return [".", "data", &self.id.to_string()].iter().collect();
-    }
-
-    pub fn get_manifest_path(&self) -> PathBuf {
-        return [".", "data", &self.id.to_string(), "manifest.toml"].iter().collect();
     }
 }
 

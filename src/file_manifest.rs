@@ -9,14 +9,7 @@ use tokio::sync::Mutex;
 
 pub struct FileManifest {
     files: Mutex<Vec<String>>,
-}
-
-impl Default for FileManifest {
-    fn default() -> Self {
-        return Self {
-            files: Mutex::new(Vec::new()),
-        };
-    }
+    path: PathBuf,
 }
 
 impl FileManifest {
@@ -25,6 +18,7 @@ impl FileManifest {
         let manifest: RawFileManifest = toml::from_str(&manifest_str)?;
         return Ok(Self {
             files: Mutex::new(manifest.files),
+            path: file_path.as_ref().into(),
         });
     }
 
@@ -32,25 +26,35 @@ impl FileManifest {
         match Self::read_file(&file_path) {
             Err(err) => {
                 info!(target: "FILE MANIFEST", "Failed to read file manifest, so generating new one. {}", err);
-                let manifest = Self::default();
-                manifest.write(&file_path).await?;
+                let manifest = Self {
+                    files: Mutex::new(Vec::new()),
+                    path: file_path.as_ref().into(),
+                };
+                manifest.write().await?;
                 return Ok(manifest);
             }
             Ok(manifest) => return Ok(manifest),
         }
     }
 
-    pub async fn write<P: AsRef<Path>>(&self, file_path: &P) -> Result<(), Box<dyn Error>> {
+    fn get_path_dir(&self) -> Result<&Path, Box<dyn Error>> {
+        return match self.path.parent() {
+            Some(par) => Ok(par),
+            None => Err(format!("Could not find parent path for: {:?}", self.path).into()),
+        };
+    }
+
+    pub async fn write(&self) -> Result<(), Box<dyn Error>> {
         let files = self.files.lock().await;
         let manifest_str = toml::to_string_pretty(&RawFileManifest {
             files: files.clone(),
         })?;
-        if let Some(parent) = file_path.as_ref().parent() {
+        if let Ok(parent) = self.get_path_dir() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent)?;
             }
         }
-        fs::write(file_path, manifest_str)?;
+        fs::write(&self.path, manifest_str)?;
         return Ok(());
     }
 
@@ -59,11 +63,8 @@ impl FileManifest {
         return files.contains(file_name);
     }
 
-    pub fn get_file_data(
-        &self,
-        file_dir: PathBuf,
-        file_name: &String,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn get_file_data(&self, file_name: &String) -> Result<Vec<u8>, Box<dyn Error>> {
+        let file_dir = self.get_path_dir()?;
         let path = file_dir.join(file_name);
         match fs::read(path) {
             Ok(data) => return Ok(data),
@@ -73,10 +74,10 @@ impl FileManifest {
 
     pub async fn write_file_data(
         &self,
-        file_dir: PathBuf,
         file_name: &String,
         data: &Vec<u8>,
     ) -> Result<(), Box<dyn Error>> {
+        let file_dir = self.get_path_dir()?;
         let path = file_dir.join(file_name);
         match fs::write(path, data) {
             Err(err) => return Err(Box::new(err)),
@@ -87,7 +88,7 @@ impl FileManifest {
         files.push(file_name.clone());
         drop(files);
 
-        self.write(&file_dir.join("manifest.toml")).await?;
+        self.write().await?;
 
         return Ok(());
     }
