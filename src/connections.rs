@@ -1,12 +1,12 @@
-use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
+use std::{collections::HashMap, error::Error, fmt, io::ErrorKind, sync::Arc, time::Duration};
 
 use bson;
 use futures::future::join_all;
 use log::{error, info};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{broadcast::Sender, Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, broadcast::Sender},
     time::sleep,
 };
 
@@ -119,8 +119,9 @@ impl ConnectionManager {
     }
 
     pub async fn connect_to(&self, node_id: u32) -> Result<(), Box<dyn Error>> {
-        let stream = establish_stream(&self.config, node_id).await;
-        let conn = Connection::new(stream, self.event_bus.clone());
+        let stream = Self::establish_stream(&self.config, node_id).await;
+        let addr = self.config.resolve_route(node_id);
+        let conn = Connection::new(stream, addr, self.event_bus.clone());
 
         let msg = Message::new(&self.config, MessageBody::InitRequest);
         conn.write_message(&msg).await?;
@@ -144,7 +145,7 @@ impl ConnectionManager {
 
         loop {
             let (stream, incoming_addr) = listener.accept().await?;
-            let res = self.handle_incoming_request(stream).await;
+            let res = self.handle_incoming_request(stream, incoming_addr.to_string()).await;
             if let Err(err) = res {
                 error!(
                     target: "SESSION",
@@ -155,8 +156,8 @@ impl ConnectionManager {
         }
     }
 
-    async fn handle_incoming_request(&self, stream: TcpStream) -> Result<(), Box<dyn Error>> {
-        let conn = Connection::new(stream, self.event_bus.clone());
+    async fn handle_incoming_request(&self, stream: TcpStream, addr: String) -> Result<(), Box<dyn Error>> {
+        let conn = Connection::new(stream, addr, self.event_bus.clone());
         let msg = conn.read_message().await?;
 
         let is_init = match msg.body {
@@ -186,18 +187,39 @@ impl ConnectionManager {
         );
         return Ok(());
     }
+
+    async fn establish_stream(config: &Config, node: u32) -> TcpStream {
+        let addr = config.resolve_route(node);
+        let mut delay: u64 = 1;
+        loop {
+            if delay > 1 {
+                info!(target: "SESSION", "Waiting {} seconds before trying again...", delay);
+                sleep(Duration::from_secs(delay)).await;
+            }
+            delay *= 2;
+            info!(target: "SESSION", "Attempting to connect to node {} ({})", node, addr);
+            match TcpStream::connect(addr.clone()).await {
+                Ok(stream) => return stream,
+                Err(err) => {
+                    error!(target: "SESSION", "Failed to connect to node {} ({}). {}", node, addr, err);
+                }
+            }
+        }
+    }
 }
 
 pub struct Connection {
     stream: Mutex<TcpStream>,
     event_bus: Arc<EventBus>,
     interrupt_bus: Sender<ConnectionInterruptEvent>,
+    addr: String,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(stream: TcpStream, addr: String, event_bus: Arc<EventBus>) -> Self {
         return Self {
             stream: Mutex::new(stream),
+            addr,
             event_bus,
             interrupt_bus: tokio::sync::broadcast::channel(64).0,
         };
@@ -212,7 +234,7 @@ impl Connection {
         let bytes = bson::to_vec(&message)?;
         let mut stream = self.get_stream_with_priority().await;
         stream.write_all(&bytes).await?;
-        info!(target: "SESSION", "Sent message: {}", message);
+        info!(target: "SESSION", "Sent message to {}: {}", self.addr, message);
         return Ok(());
     }
 
@@ -228,19 +250,16 @@ impl Connection {
         }
     }
 
-    pub async fn read_message(&self) -> Result<Message, Box<dyn Error>> {
+    pub async fn read_message(&self) -> Result<Message, ConnectionError> {
         let mut rx = self.interrupt_bus.subscribe();
         let mut stream = self.stream.lock().await;
         tokio::select! {
-            res = Self::read_message_from_stream(&mut stream) => return res,
-            Ok(ev) = rx.recv() => match ev {
-                ConnectionInterruptEvent::AllowWrite => return Err("Stopped listening to messages so we can send a message".into()),
-                ConnectionInterruptEvent::Kill => return Err("This connection is being killed".into()),
-            },
+            res = self.read_message_from_stream(&mut stream) => return res,
+            Ok(ev) = rx.recv() => return Err(ev.into()),
         }
     }
 
-    async fn read_message_from_stream(stream: &mut TcpStream) -> Result<Message, Box<dyn Error>> {
+    async fn read_message_from_stream(&self, stream: &mut TcpStream) -> Result<Message, ConnectionError> {
         let mut len_buf = [0u8; 4];
         stream.read_exact(&mut len_buf).await?;
 
@@ -252,31 +271,41 @@ impl Connection {
         stream.read_exact(&mut doc_buf[4..]).await?;
 
         let msg: Message = bson::from_reader(&doc_buf[..])?;
-        info!(target: "SESSION", "Read message: {}", msg);
+        info!(target: "SESSION", "Read message from {}: {}", self.addr, msg);
         return Ok(msg);
     }
 
     pub async fn run_worker(&self) {
+        info!(target: "SESSION", "Started worker thread for connection to {}", self.addr);
         loop {
-            info!(target: "SESSION", "Listening for more messages...");
+            
             match self.read_message().await {
-                Err(err) => {
-                    let err_str = format!("Failed in read message: {}", err);
-                    // TODO: Make this error handling much better for part 3:
-                    if err_str.contains("early eof") {
-                        info!(target: "SESSION", "The network has been broken, shutting down. Graceful handling will happen in part 3...");
-                        std::process::exit(1);
-                    }
-                    if err_str.contains("connection is being killed") {
-                        break;
-                    }
-                    info!(target: "SESSION", "{}", err_str);
-                }
                 Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg)) {
                     Err(err) => {
-                        info!(target: "SESSION", "Failed emit event for read message: {}", err);
+                        info!(target: "SESSION", "Failed emit event for read message from {}. Effectively discarding it. {}", self.addr, err);
                     }
                     Ok(_) => {}
+                },
+                Err(err) => match err {
+                    ConnectionError::Interrupt(ev) => match ev {
+                        ConnectionInterruptEvent::Kill => {
+                            info!(target: "SESSION", "Stopped connection worker for connection to {}", self.addr)
+                        }
+
+                        ConnectionInterruptEvent::AllowWrite => {
+                            info!(target: "SESSION", "Yielding connection worker to allow message write to {}", self.addr)
+                        }
+                    },
+                    ConnectionError::Deserialization(err) => {
+                        info!(target: "SESSION", "Failed to deserialize message from {}: {}", self.addr, err)
+                    }
+                    ConnectionError::Read(io_err) => match io_err.kind() {
+                        ErrorKind::UnexpectedEof => {
+                            info!(target: "SESSION", "The connection to {} has been closed, shutting down. Graceful handling will happen in part 3...", self.addr);
+                            std::process::exit(1);
+                        }
+                        _ => info!(target: "SESSION", "Failed to read message from {}: {}", self.addr, io_err),
+                    },
                 },
             }
         }
@@ -284,26 +313,42 @@ impl Connection {
 }
 
 #[derive(Clone, Debug)]
-enum ConnectionInterruptEvent {
+pub enum ConnectionInterruptEvent {
     AllowWrite,
     Kill,
 }
 
-async fn establish_stream(config: &Config, node: u32) -> TcpStream {
-    let addr = config.resolve_route(node);
-    let mut delay: u64 = 1;
-    loop {
-        if delay > 1 {
-            info!(target: "SESSION", "Waiting {} seconds before trying again...", delay);
-            sleep(Duration::from_secs(delay)).await;
-        }
-        delay *= 2;
-        info!(target: "SESSION", "Attempting to connect to node {} ({})", node, addr);
-        match TcpStream::connect(addr.clone()).await {
-            Ok(stream) => return stream,
-            Err(err) => {
-                error!(target: "SESSION", "Failed to connect to node {} ({}). {}", node, addr, err);
-            }
+#[derive(Debug)]
+pub enum ConnectionError {
+    Read(io::Error),
+    Deserialization(bson::de::Error),
+    Interrupt(ConnectionInterruptEvent),
+}
+
+impl From<io::Error> for ConnectionError {
+    fn from(err: io::Error) -> Self {
+        ConnectionError::Read(err)
+    }
+}
+
+impl From<bson::de::Error> for ConnectionError {
+    fn from(err: bson::de::Error) -> Self {
+        ConnectionError::Deserialization(err)
+    }
+}
+
+impl From<ConnectionInterruptEvent> for ConnectionError {
+    fn from(ev: ConnectionInterruptEvent) -> Self {
+        ConnectionError::Interrupt(ev)
+    }
+}
+
+impl fmt::Display for ConnectionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            _ => write!(f, "{}", self),
         }
     }
 }
+
+impl std::error::Error for ConnectionError {}
