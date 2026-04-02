@@ -41,11 +41,7 @@ impl ConnectionManager {
         message: &Message,
         targets: &Vec<u32>,
     ) -> Vec<Result<(), Box<dyn Error>>> {
-        let tasks = targets.iter().map(async |t| -> Result<(), Box<dyn Error>> {
-            let conn = self.get_connection(t).await?;
-            conn.write_message(message).await?;
-            return Ok(());
-        });
+        let tasks = targets.iter().map(|t| self.send_message(message, t));
         return join_all(tasks).await;
     }
 

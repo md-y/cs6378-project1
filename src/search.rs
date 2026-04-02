@@ -213,7 +213,7 @@ impl SearchLayer {
     async fn try_forward_response(&self, msg: &Message) -> Result<(), Box<dyn Error>> {
         let reply_key: &String = match &msg.body {
             MessageBody::SearchResponse { reply_to, .. } => reply_to,
-            _ => &String::new(),
+            _ => return Err("Message has wrong body format. Expected SearchResponse.".into()),
         };
 
         let seen = self.seen_messages.lock().await;
