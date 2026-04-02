@@ -168,7 +168,7 @@ We also retry any failed connections using exponential fall off. This means we w
 
 Currently, the hop count delay for each file search request is simply:
 $$
-t_{\text{hop\_count}}=1\text{second} * \text{hop\_count}
+t_{\text{hop\_count}}=1\text{second} * (\log_2(\text{hop\_count}) + 1)
 $$
 
 This may change in the future, but it is nonetheless monotonic.

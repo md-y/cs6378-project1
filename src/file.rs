@@ -172,7 +172,7 @@ impl FileLayer {
                 .send_search_request(&file_name, &hop_count)
                 .await?;
             results = self
-                .wait_for_search_results(Duration::from_secs(i.into()))
+                .wait_for_search_results(Duration::from_secs((i + 1).into()))
                 .await?;
 
             if results.is_empty() {
