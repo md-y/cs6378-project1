@@ -1,3 +1,4 @@
 help - Prints this help text
 find <file name> - Searches the network for a file with the specified file name
 download [node id 1] [node id 2] ... - Downloads files based on the result from "find"
+exit - Gracefully shut down this node

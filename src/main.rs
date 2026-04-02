@@ -5,7 +5,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use log::error;
+use log::{error, info};
 use tokio::try_join;
 
 use crate::bus::EventBus;
@@ -49,7 +49,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let config = Config::read_files(&args)?.unwrap();
     let arc_config = Arc::new(config);
 
-    let manifest_path: PathBuf = [".", "data", &arc_config.id.to_string(), "manifest.toml"].iter().collect();
+    let manifest_path: PathBuf = [".", "data", &arc_config.id.to_string(), "manifest.toml"]
+        .iter()
+        .collect();
     let file_manifest = FileManifest::read_or_generate(&manifest_path).await?;
     let arc_file_manifest = Arc::new(file_manifest);
 
@@ -81,6 +83,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
         runnable_search_layer.run(),
         file_layer.run()
     )?;
+
+    info!(target: "Main", "All coroutines and threads have gracefully exited. Shutting down this node gracefully.");
 
     return Ok(());
 }

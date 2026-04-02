@@ -1,4 +1,3 @@
-use futures::lock::Mutex;
 use log::info;
 
 use crate::{
@@ -12,7 +11,7 @@ use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     join,
-    sync::broadcast::error::RecvError,
+    sync::{broadcast::error::RecvError, Mutex},
     time::sleep,
     try_join,
 };
@@ -70,24 +69,29 @@ impl FileLayer {
         loop {
             let res = self
                 .event_bus
-                .wait_for(|ev| match ev {
+                .wait_for(|ev| match ev.clone() {
                     Event::MessageReceived(msg) => match msg.body {
-                        MessageBody::FileDownloadRequest { .. } => Some(msg),
+                        MessageBody::FileDownloadRequest { .. } => Some(ev),
                         _ => None,
                     },
+                    Event::Shutdown => Some(ev),
                     _ => None,
                 })
                 .await;
 
-            if let Ok(msg) = res {
-                match msg.body {
+            match res {
+                Err(err) => {
+                    info!(target: "FILE", "Error encountered while listening for file download requests: {}", err);
+                }
+                Ok(Event::Shutdown) => break,
+                Ok(Event::MessageReceived(msg)) => match msg.body {
                     MessageBody::FileDownloadRequest {
-                        file_name, slice, total_slices, ..
+                        file_name,
+                        slice,
+                        total_slices,
+                        ..
                     } => {
-                        let data = self
-                                    .file_manifest
-                                    .get_file_data(&file_name)
-                                    .unwrap();
+                        let data = self.file_manifest.get_file_data(&file_name).unwrap();
                         let start_idx = (slice * (data.len() as u32) / total_slices) as usize;
                         let end_idx = ((slice + 1) * (data.len() as u32) / total_slices) as usize;
                         let response = Message::new(
@@ -101,8 +105,9 @@ impl FileLayer {
                             info!(target: "FILE", "{}", err)
                         }
                     }
-                    _ => panic!(),
-                }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
@@ -111,6 +116,7 @@ impl FileLayer {
         loop {
             match self.read_command().await {
                 Ok(cmd) => match self.execute_command(cmd).await {
+                    Ok(false) => break,
                     _ => {}
                 },
                 Err(err) => info!(target: "FILE", "{}", err),
@@ -135,7 +141,8 @@ impl FileLayer {
                         ids.push(id);
                     }
                     return Ok(Command::Download(ids));
-                }
+                },
+                "exit" => return Ok(Command::Exit),
                 _ => return Err("Invalid command".into()),
             };
         }
@@ -143,14 +150,18 @@ impl FileLayer {
         return Err("No command given".into());
     }
 
-    async fn execute_command(&self, cmd: Command) -> Result<(), Box<dyn Error>> {
+    async fn execute_command(&self, cmd: Command) -> Result<bool, Box<dyn Error>> {
         match cmd {
             Command::Help => Self::print_help(),
             Command::Find(file_name) => self.find_file(file_name).await?,
             Command::Download(ids) => self.download_files(ids).await?,
+            Command::Exit => {
+                self.request_exit()?;
+                return Ok(false);
+            }
         }
 
-        return Ok(());
+        return Ok(true);
     }
 
     fn print_help() {
@@ -271,7 +282,9 @@ impl FileLayer {
             self.sessions.kill_connection(&temp_conn).await?;
         }
 
-        self.file_manifest.write_file_data(&items[0].file_name, &res.0).await?;
+        self.file_manifest
+            .write_file_data(&items[0].file_name, &res.0)
+            .await?;
 
         info!(target: "FILE", "Download complete!");
 
@@ -320,12 +333,23 @@ impl FileLayer {
         }
         return Ok(slices.into_iter().flatten().collect());
     }
+
+    fn request_exit(&self) -> Result<(), Box<dyn Error>> {
+        /*
+        Commands are processed one at a time, so if we get to this point we know that there is no search/download happening at this done.
+        There is also only one coroutine for handling file messages, so this will not happen while responding to a download request.
+         */
+        self.event_bus.emit(Event::Shutdown)?;
+        return Ok(());
+    }
 }
 
+#[derive(Debug)]
 pub enum Command {
     Help,
     Find(String),
     Download(Vec<u32>),
+    Exit,
 }
 
 #[derive(Clone, Debug)]

@@ -1,7 +1,12 @@
 use log::info;
 
 use crate::{
-    bus::{Event, EventBus}, config::Config, file::FileSearchResult, file_manifest::FileManifest, message::{Message, MessageBody}, session::SessionLayer
+    bus::{Event, EventBus},
+    config::Config,
+    file::FileSearchResult,
+    file_manifest::FileManifest,
+    message::{Message, MessageBody},
+    session::SessionLayer,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -55,12 +60,13 @@ impl SearchLayer {
         loop {
             let res = self
                 .event_bus
-                .wait_for(|ev| match ev {
+                .wait_for(|ev| match ev.clone() {
                     Event::MessageReceived(msg) => match msg.body {
-                        MessageBody::SearchRequest { .. } => Some(msg),
-                        MessageBody::SearchResponse { .. } => Some(msg),
+                        MessageBody::SearchRequest { .. } => Some(ev),
+                        MessageBody::SearchResponse { .. } => Some(ev),
                         _ => None,
                     },
+                    Event::Shutdown => Some(ev),
                     _ => None,
                 })
                 .await;
@@ -69,7 +75,8 @@ impl SearchLayer {
                 Err(err) => {
                     info!(target: "SEARCH", "Error encountered while listening to messages to forward: {}", err);
                 }
-                Ok(msg) => match msg.body {
+                Ok(Event::Shutdown) => break,
+                Ok(Event::MessageReceived(msg)) => match msg.body {
                     MessageBody::SearchRequest { .. } => {
                         if self.should_consume_request(&msg).await {
                             if let Err(err) = self.try_consume_request(&msg).await {
@@ -90,13 +97,16 @@ impl SearchLayer {
                     }
                     _ => {}
                 },
+                _ => {}
             };
         }
     }
 
     async fn should_consume_request(&self, message: &Message) -> bool {
         return match &message.body {
-            MessageBody::SearchRequest { file_name, .. } => self.file_manifest.has_file(&file_name).await,
+            MessageBody::SearchRequest { file_name, .. } => {
+                self.file_manifest.has_file(&file_name).await
+            }
             _ => false,
         };
     }
@@ -137,12 +147,10 @@ impl SearchLayer {
 
     async fn try_consume_response(&self, message: &Message) -> Result<(), Box<dyn Error>> {
         match &message.body {
-            MessageBody::SearchResponse {
-                file_name,
-                ..
-            } => {
+            MessageBody::SearchResponse { file_name, .. } => {
                 info!(target: "SEARCH", "Received search response for our request for {}", file_name);
-                self.event_bus.emit(Event::FileFound(FileSearchResult::new(message)))?;
+                self.event_bus
+                    .emit(Event::FileFound(FileSearchResult::new(message)))?;
                 return Ok(());
             }
             _ => panic!(),

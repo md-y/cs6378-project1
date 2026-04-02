@@ -6,7 +6,7 @@ use log::{error, info};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{Mutex, MutexGuard, broadcast::Sender},
+    sync::{broadcast::Sender, Mutex, MutexGuard},
     time::sleep,
 };
 
@@ -23,7 +23,7 @@ pub struct ConnectionManager {
 }
 
 impl ConnectionManager {
-    pub async fn fork(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn run(&self) -> Result<(), Box<dyn Error>> {
         tokio::try_join!(self.send_conn_requests(), self.listen_conn_requests())?;
         return Ok(());
     }
@@ -115,7 +115,7 @@ impl ConnectionManager {
     }
 
     pub async fn connect_to(&self, node_id: u32) -> Result<(), Box<dyn Error>> {
-        let stream = Self::establish_stream(&self.config, node_id).await;
+        let stream = self.establish_stream(node_id).await;
         let addr = self.config.resolve_route(node_id);
         let conn = Connection::new(stream, addr, self.event_bus.clone());
 
@@ -140,19 +140,41 @@ impl ConnectionManager {
         info!(target: "SESSION", "Started listing on: {}", socket_addr);
 
         loop {
-            let (stream, incoming_addr) = listener.accept().await?;
-            let res = self.handle_incoming_request(stream, incoming_addr.to_string()).await;
-            if let Err(err) = res {
-                error!(
-                    target: "SESSION",
-                    "Ignoring incoming request from {} because: {}",
-                    incoming_addr, err
-                );
-            }
+            let tcp = tokio::select! {
+                tcp_res = listener.accept() => Some(tcp_res),
+                Ok(_) = self.event_bus.wait_for(|ev| match ev {
+                    Event::Shutdown => Some(()),
+                    _ => None,
+                }) => None,
+            };
+            match tcp {
+                None => break,
+                Some(Err(err)) => {
+                    info!(target: "SESSION", "Error while listening to incoming messages: {}", err)
+                }
+                Some(Ok((stream, incoming_addr))) => {
+                    let res = self
+                        .handle_incoming_request(stream, incoming_addr.to_string())
+                        .await;
+                    if let Err(err) = res {
+                        error!(
+                            target: "SESSION",
+                            "Ignoring incoming request from {} because: {}",
+                            incoming_addr, err
+                        );
+                    }
+                }
+            };
         }
+
+        return Ok(());
     }
 
-    async fn handle_incoming_request(&self, stream: TcpStream, addr: String) -> Result<(), Box<dyn Error>> {
+    async fn handle_incoming_request(
+        &self,
+        stream: TcpStream,
+        addr: String,
+    ) -> Result<(), Box<dyn Error>> {
         let conn = Connection::new(stream, addr, self.event_bus.clone());
         let msg = conn.read_message().await?;
 
@@ -184,8 +206,8 @@ impl ConnectionManager {
         return Ok(());
     }
 
-    async fn establish_stream(config: &Config, node: u32) -> TcpStream {
-        let addr = config.resolve_route(node);
+    async fn establish_stream(&self, node: u32) -> TcpStream {
+        let addr = self.config.resolve_route(node);
         let mut delay: u64 = 1;
         loop {
             if delay > 1 {
@@ -255,7 +277,10 @@ impl Connection {
         }
     }
 
-    async fn read_message_from_stream(&self, stream: &mut TcpStream) -> Result<Message, ConnectionError> {
+    async fn read_message_from_stream(
+        &self,
+        stream: &mut TcpStream,
+    ) -> Result<Message, ConnectionError> {
         let mut len_buf = [0u8; 4];
         stream.read_exact(&mut len_buf).await?;
 
@@ -274,7 +299,6 @@ impl Connection {
     pub async fn run_worker(&self) {
         info!(target: "SESSION", "Started worker thread for connection to {}", self.addr);
         loop {
-            
             match self.read_message().await {
                 Ok(msg) => match self.event_bus.emit(Event::MessageReceived(msg)) {
                     Err(err) => {
@@ -297,10 +321,12 @@ impl Connection {
                     }
                     ConnectionError::Read(io_err) => match io_err.kind() {
                         ErrorKind::UnexpectedEof => {
-                            info!(target: "SESSION", "The connection to {} has been closed, shutting down. Graceful handling will happen in part 3...", self.addr);
+                            info!(target: "SESSION", "The connection to {} closed unexpectedly. Should use \"exit\" to quit gracefully, so assuming a crash. Also shutting down this node...", self.addr);
                             std::process::exit(1);
                         }
-                        _ => info!(target: "SESSION", "Failed to read message from {}: {}", self.addr, io_err),
+                        _ => {
+                            info!(target: "SESSION", "Failed to read message from {}: {}", self.addr, io_err)
+                        }
                     },
                 },
             }

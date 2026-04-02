@@ -11,7 +11,8 @@ pub enum Event {
     NewConnection(u32),
     MessageReceived(Message),
     NetworkEstablished,
-    FileFound(FileSearchResult)
+    FileFound(FileSearchResult),
+    Shutdown,
 }
 
 pub struct EventBus {
