@@ -1,5 +1,6 @@
 use http::uri::Authority;
 use serde::Deserialize;
+use tokio::sync::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
@@ -11,7 +12,7 @@ use crate::adj;
 pub struct Config {
     pub id: u32,
     pub listen_ip: IpAddr,
-    pub adj: adj::Adj,
+    pub adj: Mutex<adj::Adj>,
     pub routes: Vec<Authority>,
 }
 
@@ -38,13 +39,14 @@ impl Config {
     }
 
     /// Returns two vectors: first is nodes to connect to, and second is nodes to listen for
-    pub fn get_nodes_to_connect(&self) -> (Vec<u32>, Vec<u32>) {
+    pub async fn get_nodes_to_connect(&self) -> (Vec<u32>, Vec<u32>) {
+        let adj = self.adj.lock().await;
         let i = self.id;
         let mut outgoing_nodes = Vec::<u32>::new();
         let mut incoming_nodes = Vec::<u32>::new();
-        for j in 0..(self.adj.n) {
-            let outgoing = self.adj.get(i, j);
-            let incoming = self.adj.get(j, i);
+        for j in 0..(adj.n) {
+            let outgoing = adj.get(i, j);
+            let incoming = adj.get(j, i);
             let bidirectional = outgoing && incoming;
             let has_priority = i < j;
             if bidirectional {
@@ -62,11 +64,12 @@ impl Config {
         return (outgoing_nodes, incoming_nodes);
     }
 
-    pub fn get_adjacent_nodes(&self) -> HashSet<u32> {
+    pub async fn get_adjacent_nodes(&self) -> HashSet<u32> {
+        let adj = self.adj.lock().await;
         let i = self.id;
         let mut set = HashSet::new();
-        for j in 0..(self.adj.n) {
-            if (self.adj.get(i, j) || self.adj.get(j, i)) && i != j {
+        for j in 0..(adj.n) {
+            if (adj.get(i, j) || adj.get(j, i)) && i != j {
                 set.insert(j);
             }
         }
@@ -151,7 +154,7 @@ impl RawConfig {
         return Ok(Config {
             id,
             listen_ip,
-            adj,
+            adj: Mutex::new(adj),
             routes,
         });
     }

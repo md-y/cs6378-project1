@@ -193,7 +193,7 @@ impl SearchLayer {
             _ => panic!(), // Impossible to reach
         };
 
-        let targets = self.get_broadcastable_nodes(&vec![&msg.sender]);
+        let targets = self.get_broadcastable_nodes(&vec![&msg.sender]).await;
         let results = self.sessions.broadcast(&new_msg, &targets).await;
 
         let errors: Vec<&Box<dyn Error>> =
@@ -236,8 +236,8 @@ impl SearchLayer {
         return Ok(());
     }
 
-    fn get_broadcastable_nodes(&self, exclusions: &Vec<&u32>) -> Vec<u32> {
-        let mut targets_set = self.config.get_adjacent_nodes();
+    async fn get_broadcastable_nodes(&self, exclusions: &Vec<&u32>) -> Vec<u32> {
+        let mut targets_set = self.config.get_adjacent_nodes().await;
         targets_set.remove(&self.config.id);
         for id in exclusions {
             targets_set.remove(id);
@@ -263,7 +263,7 @@ impl SearchLayer {
         requests.insert(message.get_key());
         drop(requests);
 
-        let targets = &self.get_broadcastable_nodes(&vec![]);
+        let targets = &self.get_broadcastable_nodes(&vec![]).await;
         self.sessions.broadcast(&message, targets).await;
 
         return Ok(());

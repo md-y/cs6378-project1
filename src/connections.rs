@@ -96,7 +96,7 @@ impl ConnectionManager {
     }
 
     async fn send_conn_requests(&self) -> Result<(), Box<dyn Error>> {
-        let nodes = self.config.get_nodes_to_connect().0;
+        let nodes = self.config.get_nodes_to_connect().await.0;
 
         if nodes.is_empty() {
             info!(target: "SESSION", "This node isn't setup to make any connection requests, so it'll just listen.");

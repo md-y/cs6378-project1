@@ -46,7 +46,7 @@ impl SessionLayer {
     }
 
     async fn track_new_connections(&self) -> Result<(), Box<dyn Error>> {
-        let conn_tuple = self.config.get_nodes_to_connect();
+        let conn_tuple = self.config.get_nodes_to_connect().await;
         let mut remaining_conns: HashSet<u32> =
             HashSet::from_iter([conn_tuple.0, conn_tuple.1].into_iter().flatten());
 
