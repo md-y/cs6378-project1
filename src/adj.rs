@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fmt};
+use std::{
+    cmp::{max, min},
+    collections::HashSet,
+    fmt,
+};
 
 use serde::Deserialize;
 
@@ -17,6 +21,34 @@ impl Adj {
             Some(elem) => *elem,
             None => false,
         };
+    }
+
+    pub fn get_components(&self) -> Vec<HashSet<u32>> {
+        let mut components: Vec<HashSet<u32>> = Vec::new();
+        for i in 0..self.n {
+            components.push(HashSet::from([i]));
+        }
+
+        for i in 0..self.n {
+            for j in 0..self.n {
+                if i == j {
+                    continue;
+                }
+
+                let i_c_idx = components.iter().position(|s| s.contains(&i)).unwrap();
+                let j_c_idx = components.iter().position(|s| s.contains(&j)).unwrap();
+                if i_c_idx == j_c_idx || (!self.get(i, j) && !self.get(j, i)) {
+                    continue;
+                }
+
+                let lesser = min(i_c_idx, j_c_idx);
+                let greater = max(i_c_idx, j_c_idx);
+                let removed_set = components.swap_remove(greater);
+                components[lesser] = &components[lesser] | &removed_set;
+            }
+        }
+
+        return components;
     }
 
     pub fn is_connected(&self) -> bool {
