@@ -309,9 +309,9 @@ impl Connection {
                 Err(err) => match err {
                     ConnectionError::Interrupt(ev) => match ev {
                         ConnectionInterruptEvent::Kill => {
-                            info!(target: "SESSION", "Stopped connection worker for connection to {}", self.addr)
+                            info!(target: "SESSION", "Stopped connection worker for connection to {}", self.addr);
+                            break;
                         }
-
                         ConnectionInterruptEvent::AllowWrite => {
                             info!(target: "SESSION", "Yielding connection worker to allow message write to {}", self.addr)
                         }
@@ -321,8 +321,14 @@ impl Connection {
                     }
                     ConnectionError::Read(io_err) => match io_err.kind() {
                         ErrorKind::UnexpectedEof => {
-                            info!(target: "SESSION", "The connection to {} closed unexpectedly. Should use \"exit\" to quit gracefully, so assuming a crash. Also shutting down this node...", self.addr);
-                            std::process::exit(1);
+                            info!(target: "SESSION", "The connection with {} closed.", self.addr);
+                            match self.event_bus.emit(Event::SocketClosed(self.addr.clone())) {
+                                Err(err) => {
+                                    info!(target: "SESSION", "Failed to emit connection ended event: {}", err);
+                                    panic!();
+                                }
+                                Ok(_) => break,
+                            };
                         }
                         _ => {
                             info!(target: "SESSION", "Failed to read message from {}: {}", self.addr, io_err)

@@ -1,11 +1,11 @@
 use http::uri::Authority;
 use serde::Deserialize;
-use tokio::sync::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path};
+use std::path::Path;
 use std::{fmt, fs, io};
+use tokio::sync::Mutex;
 
 use crate::adj;
 

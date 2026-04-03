@@ -13,6 +13,7 @@ pub enum Event {
     NetworkEstablished,
     FileFound(FileSearchResult),
     Shutdown,
+    SocketClosed(String),
 }
 
 pub struct EventBus {
