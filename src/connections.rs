@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fmt, io::ErrorKind, sync::Arc, time::Duration};
+use std::{collections::HashMap, error::Error, fmt, io::ErrorKind, net::SocketAddr, sync::Arc, time::Duration};
 
 use bson;
 use futures::future::join_all;
@@ -6,7 +6,7 @@ use log::{error, info};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{broadcast::Sender, Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, broadcast::Sender},
     time::sleep,
 };
 
@@ -24,7 +24,7 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     pub async fn run(&self) -> Result<(), Box<dyn Error>> {
-        tokio::try_join!(self.send_conn_requests(), self.listen_conn_requests())?;
+        tokio::try_join!(self.send_conn_requests(), self.run_worker())?;
         return Ok(());
     }
 
@@ -134,25 +134,29 @@ impl ConnectionManager {
         };
     }
 
-    async fn listen_conn_requests(&self) -> Result<(), Box<dyn Error>> {
+    async fn run_worker(&self) -> Result<(), Box<dyn Error>> {
         let socket_addr = self.config.get_listen_address();
         let listener = TcpListener::bind(&socket_addr).await?;
         info!(target: "SESSION", "Started listing on: {}", socket_addr);
 
         loop {
             let tcp = tokio::select! {
-                tcp_res = listener.accept() => Some(tcp_res),
-                Ok(_) = self.event_bus.wait_for(|ev| match ev {
-                    Event::Shutdown => Some(()),
+                tcp_res = listener.accept() => tcp_res.and_then(|r| Ok((Some(r.0), Some(r.1)))),
+                Ok(bus_res) = self.event_bus.wait_for(|ev| match ev {
+                    Event::Shutdown => Some((None, None)),
+                    Event::SocketClosed(addr) => Some((None, Some(addr.parse::<SocketAddr>().unwrap()))),
                     _ => None,
-                }) => None,
+                }) => Ok(bus_res),
             };
             match tcp {
-                None => break,
-                Some(Err(err)) => {
-                    info!(target: "SESSION", "Error while listening to incoming messages: {}", err)
-                }
-                Some(Ok((stream, incoming_addr))) => {
+                Ok((None, Some(closed_addr))) => {
+                    let entry = self.get_by_addr(closed_addr.to_string()).await?;
+                    let mut conns = self.connections.lock().await;
+                    conns.remove(&entry.0);
+                    drop(conns);
+                    self.event_bus.emit(Event::ConnectionClosed(entry.0))?;
+                },
+                Ok((Some(stream), Some(incoming_addr))) => {
                     let res = self
                         .handle_incoming_request(stream, incoming_addr.to_string())
                         .await;
@@ -163,7 +167,15 @@ impl ConnectionManager {
                             incoming_addr, err
                         );
                     }
-                }
+                },
+                Ok((None, None)) => {
+                    info!(target: "SESSION", "Stopped session manager worker.");
+                    break;
+                },
+                Err(err) => {
+                    info!(target: "SESSION", "Error encountered in connection manager worker. Will ignore. {}", err);
+                },
+                _ => continue,
             };
         }
 
@@ -223,6 +235,14 @@ impl ConnectionManager {
                 }
             }
         }
+    }
+
+    async fn get_by_addr(&self, addr: String) -> Result<(u32, Arc<Connection>), Box<dyn Error>> {
+        let conns = self.connections.lock().await;
+        return match conns.iter().find(|entry| entry.1.addr == addr) {
+            Some(entry) => Ok((entry.0.clone(), entry.1.clone())),
+            None => Err(format!("Could not find connection with address {}", addr).into()),
+        };
     }
 }
 

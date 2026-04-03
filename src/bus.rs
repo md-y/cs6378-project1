@@ -9,6 +9,7 @@ use crate::{file::FileSearchResult, message::Message};
 #[derive(Clone, Debug)]
 pub enum Event {
     NewConnection(u32),
+    ConnectionClosed(u32),
     MessageReceived(Message),
     NetworkEstablished,
     FileFound(FileSearchResult),
