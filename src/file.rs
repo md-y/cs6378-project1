@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     file_manifest::FileManifest,
     message::{Message, MessageBody},
-    session::SessionLayer,
+    session::{SessionLayer},
 };
 use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 use tokio::{
@@ -141,8 +141,10 @@ impl FileLayer {
                         ids.push(id);
                     }
                     return Ok(Command::Download(ids));
-                },
+                }
                 "exit" => return Ok(Command::Exit),
+                "adj" => return Ok(Command::Adj),
+                "repair" => return Ok(Command::Repair),
                 _ => return Err("Invalid command".into()),
             };
         }
@@ -156,9 +158,17 @@ impl FileLayer {
             Command::Find(file_name) => self.find_file(file_name).await?,
             Command::Download(ids) => self.download_files(ids).await?,
             Command::Exit => {
-                self.request_exit()?;
+                self.request_exit().await?;
                 return Ok(false);
             }
+            Command::Adj => self.config.print_adj().await,
+            Command::Repair => {
+                match self.sessions.repair_connections().await {
+                    Ok(true) => info!(target: "FILE", "Repaired all connections."),
+                    Ok(false) => info!(target: "FILE", "No connections to repair."),
+                    Err(err) => return Err(err),
+                };
+            },
         }
 
         return Ok(true);
@@ -334,11 +344,17 @@ impl FileLayer {
         return Ok(slices.into_iter().flatten().collect());
     }
 
-    fn request_exit(&self) -> Result<(), Box<dyn Error>> {
-        /*
-        Commands are processed one at a time, so if we get to this point we know that there is no search/download happening at this done.
-        There is also only one coroutine for handling file messages, so this will not happen while responding to a download request.
-         */
+    async fn request_exit(&self) -> Result<(), Box<dyn Error>> {
+        let mut new_adj = self.config.adj.lock().await.clone();
+        new_adj.deactivate_node(self.config.id);
+        if !new_adj.is_connected() {
+            info!(target: "FILE", "Adj with this node removed is not connected. Will repair...");
+            new_adj.repair();
+        } else {
+            info!(target: "FILE", "Adj with this node removed is still connected. Will not repair.");
+        }
+
+        self.sessions.broadcast_adj_update(new_adj).await?;
         self.event_bus.emit(Event::Shutdown)?;
         return Ok(());
     }
@@ -350,6 +366,8 @@ pub enum Command {
     Find(String),
     Download(Vec<u32>),
     Exit,
+    Adj,
+    Repair,
 }
 
 #[derive(Clone, Debug)]

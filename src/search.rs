@@ -64,6 +64,7 @@ impl SearchLayer {
                     Event::MessageReceived(msg) => match msg.body {
                         MessageBody::SearchRequest { .. } => Some(ev),
                         MessageBody::SearchResponse { .. } => Some(ev),
+                        MessageBody::AdjUpdate { .. } => Some(ev),
                         _ => None,
                     },
                     Event::Shutdown => Some(ev),
@@ -92,6 +93,11 @@ impl SearchLayer {
                                 info!(target: "SEARCH", "{}", err);
                             }
                         } else if let Err(err) = self.try_forward_response(&msg).await {
+                            info!(target: "SEARCH", "{}", err);
+                        }
+                    }
+                    MessageBody::AdjUpdate { .. } => {
+                        if let Err(err) = self.try_forward_adj_update(&msg).await {
                             info!(target: "SEARCH", "{}", err);
                         }
                     }
@@ -243,6 +249,48 @@ impl SearchLayer {
             targets_set.remove(id);
         }
         return targets_set.into_iter().collect();
+    }
+
+    async fn try_forward_adj_update(&self, msg: &Message) -> Result<(), Box<dyn Error>> {
+        let msg_key = msg.get_key();
+        let seen = self.seen_messages.lock().await;
+        if seen.contains_key(&msg_key) {
+            return Ok(());
+        }
+        drop(seen);
+
+        let msg_adj = match &msg.body {
+            MessageBody::AdjUpdate { adj } => adj,
+            _ => return Err("Message body does not contain Adj".into()),
+        };
+
+        self.config.replace_adj(msg_adj.clone()).await;
+
+        let new_msg = msg.clone();
+        let targets = self.get_broadcastable_nodes(&vec![&msg.sender]).await;
+        let results = self.sessions.broadcast(&new_msg, &targets).await;
+
+        let errors: Vec<&Box<dyn Error>> =
+            results.iter().filter_map(|r| r.as_ref().err()).collect();
+        if !errors.is_empty() {
+            return Err(format!(
+                "Failed to forward adjacency update to {} nodes. {:?}",
+                errors.len(),
+                errors
+            )
+            .into());
+        }
+
+        let mut seen = self.seen_messages.lock().await;
+        seen.insert(
+            msg_key,
+            SeenMessage {
+                message: msg.clone(),
+                forwarder: msg.sender,
+            },
+        );
+
+        return Ok(());
     }
 
     pub async fn send_search_request(

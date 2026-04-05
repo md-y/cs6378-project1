@@ -1,4 +1,7 @@
-use std::{collections::HashMap, error::Error, fmt, io::ErrorKind, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, error::Error, fmt, io::ErrorKind, net::SocketAddr, sync::Arc,
+    time::Duration,
+};
 
 use bson;
 use futures::future::join_all;
@@ -6,7 +9,7 @@ use log::{error, info};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{Mutex, MutexGuard, broadcast::Sender},
+    sync::{broadcast::Sender, Mutex, MutexGuard},
     time::sleep,
 };
 
@@ -45,11 +48,45 @@ impl ConnectionManager {
         return join_all(tasks).await;
     }
 
+    async fn ensure_connection_to_peer(&self, peer: &u32) -> Result<(), Box<dyn Error>> {
+        if self.has_connection(peer).await {
+            return Ok(());
+        }
+        let (outgoing, _) = self.config.get_nodes_to_connect().await;
+        if outgoing.contains(peer) {
+            info!(
+                target: "SESSION",
+                "Establishing connection to node {} before sending message",
+                peer
+            );
+            return self.connect_to(*peer).await;
+        }
+        info!(
+            target: "SESSION",
+            "Waiting for node {} to connect to this node before sending message",
+            peer
+        );
+        self.event_bus
+            .wait_for(|ev| match ev {
+                Event::NewConnection(conn_id) => {
+                    if conn_id == *peer {
+                        return Some(());
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            })
+            .await?;
+        return Ok(());
+    }
+
     pub async fn send_message(
         &self,
         message: &Message,
         target: &u32,
     ) -> Result<(), Box<dyn Error>> {
+        self.ensure_connection_to_peer(target).await?;
         let conn = self.get_connection(target).await?;
         conn.write_message(message).await?;
         return Ok(());
@@ -155,7 +192,7 @@ impl ConnectionManager {
                     conns.remove(&entry.0);
                     drop(conns);
                     self.event_bus.emit(Event::ConnectionClosed(entry.0))?;
-                },
+                }
                 Ok((Some(stream), Some(incoming_addr))) => {
                     let res = self
                         .handle_incoming_request(stream, incoming_addr.to_string())
@@ -167,14 +204,15 @@ impl ConnectionManager {
                             incoming_addr, err
                         );
                     }
-                },
+                }
                 Ok((None, None)) => {
+                    self.shutdown_all_connection_workers().await;
                     info!(target: "SESSION", "Stopped session manager worker.");
                     break;
-                },
+                }
                 Err(err) => {
                     info!(target: "SESSION", "Error encountered in connection manager worker. Will ignore. {}", err);
-                },
+                }
                 _ => continue,
             };
         }
@@ -202,6 +240,7 @@ impl ConnectionManager {
         conn.write_message(&res_msg).await?;
 
         self.add_connection(msg.sender, conn).await?;
+
         return Ok(());
     }
 
@@ -243,6 +282,17 @@ impl ConnectionManager {
             Some(entry) => Ok((entry.0.clone(), entry.1.clone())),
             None => Err(format!("Could not find connection with address {}", addr).into()),
         };
+    }
+
+    async fn shutdown_all_connection_workers(&self) -> Result<(), Box<dyn Error>> {
+        let mut map = self.connections.lock().await;
+        let conns: Vec<Arc<Connection>> = map.drain().map(|(_, c)| c).collect();
+        drop(map);
+        for conn in conns {
+            conn.kill_worker().await?;
+        }
+
+        return Ok(());
     }
 }
 

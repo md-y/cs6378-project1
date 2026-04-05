@@ -3,7 +3,7 @@ use std::fmt;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::{adj::Adj, config::Config};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -37,6 +37,9 @@ pub enum MessageBody {
     FileDownloadResponse {
         slice: u32,
         data: Vec<u8>,
+    },
+    AdjUpdate {
+        adj: Adj,
     },
 }
 
@@ -103,6 +106,9 @@ impl fmt::Display for Message {
                     self.sender,
                     data.len(),
                 )
+            }
+            MessageBody::AdjUpdate { adj, .. } => {
+                format!("Adjacency update (matrix size {})", adj.n)
             }
         };
         return write!(f, "{} from node {}", body_text, self.sender);
