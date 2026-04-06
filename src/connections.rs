@@ -206,7 +206,7 @@ impl ConnectionManager {
                     }
                 }
                 Ok((None, None)) => {
-                    self.shutdown_all_connection_workers().await;
+                    self.shutdown_all_connection_workers().await?;
                     info!(target: "SESSION", "Stopped session manager worker.");
                     break;
                 }
