@@ -185,11 +185,13 @@ impl ConnectionManager {
             };
             match tcp {
                 Ok((None, Some(closed_addr))) => {
-                    let entry = self.get_by_addr(closed_addr.to_string()).await?;
-                    let mut conns = self.connections.lock().await;
-                    conns.remove(&entry.0);
-                    drop(conns);
-                    self.event_bus.emit(Event::ConnectionClosed(entry.0))?;
+                    let res = self.get_by_addr(closed_addr.to_string()).await;
+                    if let Ok(entry) = res {
+                        let mut conns = self.connections.lock().await;
+                        conns.remove(&entry.0);
+                        drop(conns);
+                        self.event_bus.emit(Event::ConnectionClosed(entry.0))?;
+                    }
                 }
                 Ok((Some(stream), Some(incoming_addr))) => {
                     let res = self
