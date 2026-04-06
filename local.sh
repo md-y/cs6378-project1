@@ -5,4 +5,4 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-cargo run "./cfg/local.toml" "./cfg/$1.toml"
+RUST_BACKTRACE=full cargo run "./cfg/local.toml" "./cfg/$1.toml"
