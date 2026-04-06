@@ -131,7 +131,6 @@ impl SearchLayer {
                         forwarder: self.config.id,
                         file_name: file_name.clone(),
                         reply_to: message.get_key(),
-                        // TODO: Do this more efficiently:
                         file_size: self.file_manifest.get_file_data(file_name)?.len() as u64,
                     },
                 );
