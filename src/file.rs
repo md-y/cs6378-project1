@@ -49,7 +49,7 @@ impl FileLayer {
 
     pub async fn run(&self) -> Result<(), Box<dyn Error>> {
         self.event_bus
-            .wait_for(|ev| match ev {
+            .wait_for_once(|ev| match ev {
                 Event::NetworkEstablished => Some(()),
                 _ => None,
             })
@@ -66,10 +66,11 @@ impl FileLayer {
     }
 
     async fn listen_for_file_requests(&self) {
+        let mut recv = self.event_bus.subscribe();
         loop {
             let res = self
                 .event_bus
-                .wait_for(|ev| match ev.clone() {
+                .wait_for(&mut recv, |ev| match ev.clone() {
                     Event::MessageReceived(msg) => match msg.body {
                         MessageBody::FileDownloadRequest { .. } => Some(ev),
                         _ => None,
@@ -342,10 +343,11 @@ impl FileLayer {
     async fn listen_for_file_data(&self, slice_count: &u32) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut slices: Vec<Vec<u8>> = vec![vec![]; *slice_count as usize];
         let mut response_count = 0;
+        let mut recv = self.event_bus.subscribe();
         loop {
             let (s, data) = self
                 .event_bus
-                .wait_for(|ev| match ev {
+                .wait_for(&mut recv, |ev| match ev {
                     Event::MessageReceived(msg) => match msg.body {
                         MessageBody::FileDownloadResponse { slice, data } => Some((slice, data)),
                         _ => None,

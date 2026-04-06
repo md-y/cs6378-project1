@@ -35,8 +35,19 @@ impl EventBus {
         return self.sender.send(event);
     }
 
-    pub async fn wait_for<T, U: Fn(Event) -> Option<T>>(&self, func: U) -> Result<T, RecvError> {
+    pub async fn wait_for_once<T, U: Fn(Event) -> Option<T>>(
+        &self,
+        func: U,
+    ) -> Result<T, RecvError> {
         let mut receiver = self.subscribe();
+        return self.wait_for(&mut receiver, func).await;
+    }
+
+    pub async fn wait_for<T, U: Fn(Event) -> Option<T>>(
+        &self,
+        receiver: &mut Receiver<Event>,
+        func: U,
+    ) -> Result<T, RecvError> {
         loop {
             match receiver.recv().await {
                 Ok(ev) => match func(ev) {

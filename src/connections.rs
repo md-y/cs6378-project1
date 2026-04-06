@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap, error::Error, fmt, io::ErrorKind, sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, error::Error, fmt, io::ErrorKind, sync::Arc, time::Duration};
 
 use bson;
 use futures::future::join_all;
@@ -67,7 +64,7 @@ impl ConnectionManager {
             peer
         );
         self.event_bus
-            .wait_for(|ev| match ev {
+            .wait_for_once(|ev| match ev {
                 Event::NewConnection(conn_id) => {
                     if conn_id == *peer {
                         return Some(());
@@ -175,11 +172,12 @@ impl ConnectionManager {
         let socket_addr = self.config.get_listen_address();
         let listener = TcpListener::bind(&socket_addr).await?;
         info!(target: "SESSION", "Started listing on: {}", socket_addr);
+        let mut recv = self.event_bus.subscribe();
 
         loop {
             let tcp = tokio::select! {
                 tcp_res = listener.accept() => tcp_res.and_then(|r| Ok((Some(r.0), Some(r.1.to_string())))),
-                Ok(bus_res) = self.event_bus.wait_for(|ev| match ev {
+                Ok(bus_res) = self.event_bus.wait_for(&mut recv, |ev| match ev {
                     Event::Shutdown => Some((None, None)),
                     Event::SocketClosed(addr) => Some((None, Some(addr))),
                     _ => None,

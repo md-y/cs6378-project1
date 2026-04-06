@@ -43,7 +43,7 @@ impl SearchLayer {
 
     pub async fn run(&self) -> Result<(), Box<dyn Error>> {
         self.event_bus
-            .wait_for(|ev| match ev {
+            .wait_for_once(|ev| match ev {
                 Event::NetworkEstablished => Some(()),
                 _ => None,
             })
@@ -57,10 +57,11 @@ impl SearchLayer {
     }
 
     async fn run_request_forwarding(&self) {
+        let mut recv = self.event_bus.subscribe();
         loop {
             let res = self
                 .event_bus
-                .wait_for(|ev| match ev.clone() {
+                .wait_for(&mut recv, |ev| match ev.clone() {
                     Event::MessageReceived(msg) => match msg.body {
                         MessageBody::SearchRequest { .. } => Some(ev),
                         MessageBody::SearchResponse { .. } => Some(ev),

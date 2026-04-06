@@ -50,11 +50,12 @@ impl SessionLayer {
         let conn_tuple = self.config.get_nodes_to_connect().await;
         let mut remaining_conns: HashSet<u32> =
             HashSet::from_iter([conn_tuple.0, conn_tuple.1].into_iter().flatten());
+        let mut recv = self.event_bus.subscribe();
 
         loop {
             let res = self
                 .event_bus
-                .wait_for(|ev| match ev.clone() {
+                .wait_for(&mut recv, |ev| match ev.clone() {
                     Event::NewConnection(_) => Some(ev),
                     Event::ConnectionClosed(_) => Some(ev),
                     Event::Shutdown => Some(ev),
