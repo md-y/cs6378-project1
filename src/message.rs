@@ -1,6 +1,5 @@
-use std::fmt;
+use std::{fmt, sync::Mutex};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{adj::Adj, config::Config};
@@ -10,7 +9,7 @@ use crate::{adj::Adj, config::Config};
 pub struct Message {
     pub sender: u32,
     pub body: MessageBody,
-    pub timestamp: i64,
+    pub timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -43,6 +42,8 @@ pub enum MessageBody {
     },
 }
 
+static LOGICAL_CLOCK: Mutex<u64> = Mutex::new(0);
+
 impl Message {
     pub fn new(config: &Config, body: MessageBody) -> Self {
         return Self {
@@ -56,8 +57,10 @@ impl Message {
         return format!("{}-{}", self.sender, self.timestamp);
     }
 
-    fn get_current_timestamp() -> i64 {
-        return Utc::now().timestamp_millis();
+    fn get_current_timestamp() -> u64 {
+        let mut clock = LOGICAL_CLOCK.lock().unwrap();
+        *clock += 1;
+        return *clock;
     }
 }
 
