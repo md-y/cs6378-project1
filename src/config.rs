@@ -131,6 +131,11 @@ impl Config {
 
         return new_adj;
     }
+
+    pub async fn is_node_active(&self, node_id: &u32) -> bool {
+        let adj = self.adj.lock().await;
+        return adj.is_activated(node_id);
+    }
 }
 
 #[derive(Deserialize)]

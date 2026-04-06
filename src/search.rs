@@ -265,6 +265,7 @@ impl SearchLayer {
         };
 
         self.config.replace_adj(msg_adj.clone()).await;
+        self.sessions.repair_connections(false).await?;
 
         let new_msg = msg.clone();
         let targets = self.get_broadcastable_nodes(&vec![&msg.sender]).await;

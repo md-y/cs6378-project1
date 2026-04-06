@@ -173,7 +173,7 @@ impl FileLayer {
             }
             Command::Adj => self.config.print_adj().await,
             Command::Repair => {
-                match self.sessions.repair_connections().await {
+                match self.sessions.repair_connections(true).await {
                     Ok(true) => info!(target: "FILE", "Repaired all connections."),
                     Ok(false) => info!(target: "FILE", "No connections to repair."),
                     Err(err) => return Err(err),

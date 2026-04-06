@@ -145,11 +145,16 @@ impl SessionLayer {
         return self.conn_manager.kill_connection(&node_id).await;
     }
 
-    pub async fn repair_connections(&self) -> Result<bool, Box<dyn Error>> {
+    pub async fn repair_connections(
+        &self,
+        allow_deactivated: bool,
+    ) -> Result<bool, Box<dyn Error>> {
         let required_conns = self.config.get_nodes_to_connect().await.0;
         let mut missing_conns: Vec<u32> = vec![];
         for c in required_conns {
-            if !self.conn_manager.has_connection(&c).await {
+            if !self.conn_manager.has_connection(&c).await
+                && (allow_deactivated || self.config.is_node_active(&c).await)
+            {
                 missing_conns.push(c);
             }
         }
