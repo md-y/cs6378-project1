@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, error::Error, fmt, io::ErrorKind, net::SocketAddr, sync::Arc,
+    collections::HashMap, error::Error, fmt, io::ErrorKind, sync::Arc,
     time::Duration,
 };
 
@@ -178,10 +178,10 @@ impl ConnectionManager {
 
         loop {
             let tcp = tokio::select! {
-                tcp_res = listener.accept() => tcp_res.and_then(|r| Ok((Some(r.0), Some(r.1)))),
+                tcp_res = listener.accept() => tcp_res.and_then(|r| Ok((Some(r.0), Some(r.1.to_string())))),
                 Ok(bus_res) = self.event_bus.wait_for(|ev| match ev {
                     Event::Shutdown => Some((None, None)),
-                    Event::SocketClosed(addr) => Some((None, Some(addr.parse::<SocketAddr>().unwrap()))),
+                    Event::SocketClosed(addr) => Some((None, Some(addr))),
                     _ => None,
                 }) => Ok(bus_res),
             };
@@ -195,7 +195,7 @@ impl ConnectionManager {
                 }
                 Ok((Some(stream), Some(incoming_addr))) => {
                     let res = self
-                        .handle_incoming_request(stream, incoming_addr.to_string())
+                        .handle_incoming_request(stream, incoming_addr.clone())
                         .await;
                     if let Err(err) = res {
                         error!(
