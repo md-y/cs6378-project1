@@ -340,7 +340,7 @@ impl FileLayer {
     }
 
     async fn listen_for_file_data(&self, slice_count: &u32) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut slices: Vec<Vec<u8>> = Vec::new();
+        let mut slices: Vec<Vec<u8>> = vec![vec![]; *slice_count as usize];
         let mut response_count = 0;
         loop {
             let (s, data) = self
