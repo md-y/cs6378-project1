@@ -137,7 +137,7 @@ impl FileLayer {
                     let min_hop_pow = parts
                         .get(2)
                         .and_then(|s| Some(s.parse::<u32>()))
-                        .unwrap_or(Ok(1))?;
+                        .unwrap_or(Ok(0))?;
                     return Ok(Command::Find(
                         parts[1].trim().to_string(),
                         Some(min_hop_pow),
@@ -200,7 +200,7 @@ impl FileLayer {
         let mut results: Vec<FileSearchResult> = vec![];
         info!(target: "FILE", "Searching network for {}", file_name);
 
-        let min_hop_pow_val = min_hop_pow.unwrap_or(1);
+        let min_hop_pow_val = min_hop_pow.unwrap_or(0);
         if min_hop_pow_val > 0 {
             info!(target: "File", "Forcing search to start with a hop count of {}", (2 as u32).pow(min_hop_pow_val));
         }
