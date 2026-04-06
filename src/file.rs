@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     file_manifest::FileManifest,
     message::{Message, MessageBody},
-    session::{SessionLayer},
+    session::SessionLayer,
 };
 use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 use tokio::{
@@ -133,7 +133,16 @@ impl FileLayer {
             let parts: Vec<&str> = line.split(' ').collect();
             match parts[0].trim() {
                 "help" => return Ok(Command::Help),
-                "find" if parts.len() > 1 => return Ok(Command::Find(parts[1].trim().to_string())),
+                "find" if parts.len() > 1 => {
+                    let min_hop_pow = parts
+                        .get(2)
+                        .and_then(|s| Some(s.parse::<u32>()))
+                        .unwrap_or(Ok(1))?;
+                    return Ok(Command::Find(
+                        parts[1].trim().to_string(),
+                        Some(min_hop_pow),
+                    ));
+                }
                 "download" if parts.len() > 1 => {
                     let mut ids = Vec::new();
                     for part in parts[1..].iter() {
@@ -155,7 +164,7 @@ impl FileLayer {
     async fn execute_command(&self, cmd: Command) -> Result<bool, Box<dyn Error>> {
         match cmd {
             Command::Help => Self::print_help(),
-            Command::Find(file_name) => self.find_file(file_name).await?,
+            Command::Find(file_name, min_hop) => self.find_file(file_name, min_hop).await?,
             Command::Download(ids) => self.download_files(ids).await?,
             Command::Exit => {
                 self.request_exit().await?;
@@ -168,7 +177,7 @@ impl FileLayer {
                     Ok(false) => info!(target: "FILE", "No connections to repair."),
                     Err(err) => return Err(err),
                 };
-            },
+            }
         }
 
         return Ok(true);
@@ -178,7 +187,11 @@ impl FileLayer {
         println!("{}", HELP_TEXT);
     }
 
-    async fn find_file(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+    async fn find_file(
+        &self,
+        file_name: String,
+        min_hop_pow: Option<u32>,
+    ) -> Result<(), Box<dyn Error>> {
         if self.file_manifest.has_file(&file_name).await {
             info!(target: "FILE", "This node already has {}", file_name);
             return Ok(());
@@ -187,7 +200,12 @@ impl FileLayer {
         let mut results: Vec<FileSearchResult> = vec![];
         info!(target: "FILE", "Searching network for {}", file_name);
 
-        for i in 0..5 {
+        let min_hop_pow_val = min_hop_pow.unwrap_or(1);
+        if min_hop_pow_val > 0 {
+            info!(target: "File", "Forcing search to start with a hop count of {}", (2 as u32).pow(min_hop_pow_val));
+        }
+
+        for i in min_hop_pow_val..5 {
             let hop_count = (2 as u32).pow(i);
             self.search
                 .send_search_request(&file_name, &hop_count)
@@ -363,7 +381,7 @@ impl FileLayer {
 #[derive(Debug)]
 pub enum Command {
     Help,
-    Find(String),
+    Find(String, Option<u32>),
     Download(Vec<u32>),
     Exit,
     Adj,
